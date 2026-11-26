@@ -39,3 +39,14 @@ Thumbs.db
 
 # Agent-local state (project memory, scratch)
 .openhands/
+
+# Android / Gradle
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+.cxx/

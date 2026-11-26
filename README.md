@@ -182,8 +182,14 @@ files and (b) tell the page where the API is.
 | --- | --- |
 | **Web** | Served by the backend, or any static host with `?api=https://your-server` |
 | **Desktop (Electron/Tauri)** | Ship `frontend/`, run the backend as a sidecar on `127.0.0.1:<free port>`, inject `window.__PRODL_API_BASE__` before the app scripts |
-| **Android (local server)** | Bundle the SPA in the APK, run the backend via Chaquopy/Termux-style sidecar on `127.0.0.1:8000`, load `file:///android_asset/index.html` — the default base URL already points there |
+| **Android** | `android/` builds a self-contained APK: bundled yt-dlp + ffmpeg (no Python server, no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
 | **CLI / scripts** | Use the JSON API directly (see API_SPEC.md) |
+
+The Android target is a first-class build, not a wrapper around the Python
+backend: the phone is the server. It binds `127.0.0.1` only, keeps downloads
+alive in a foreground service, plays streams natively (Media3 + Picture-in-Picture,
+SponsorBlock auto-skip), and has no Google Play Services, Firebase or ad SDK in
+its dependency graph.
 
 Resolution order for the API base URL:
 `?api=` → `localStorage` → `window.__PRODL_API_BASE__` → `window.PRODL_CONFIG.apiBaseUrl`

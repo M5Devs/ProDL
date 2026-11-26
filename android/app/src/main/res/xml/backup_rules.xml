@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cookies and downloaded media must never leave the device via backup. -->
+<full-backup-content>
+    <exclude domain="file" path="prodl/cookies.txt" />
+    <exclude domain="file" path="prodl/" />
+</full-backup-content>

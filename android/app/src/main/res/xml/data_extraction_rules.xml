@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="prodl/cookies.txt" />
+        <exclude domain="file" path="prodl/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="prodl/cookies.txt" />
+    </device-transfer>
+</data-extraction-rules>

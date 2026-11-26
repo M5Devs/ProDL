@@ -345,6 +345,7 @@
     meta: 'progressMeta',
     actions: 'progressActions',
     saveLink: 'saveLink',
+    playLink: 'playLink',
     closeBtn: 'progressClose'
   };
 
@@ -356,6 +357,7 @@
     meta: 'convertProgressMeta',
     actions: 'convertProgressActions',
     saveLink: 'convertSaveLink',
+    playLink: 'convertPlayLink',
     closeBtn: 'convertProgressClose'
   };
 
@@ -389,6 +391,31 @@
     if (event.message) refs.title.textContent = event.message;
   }
 
+  /*
+   * Native shells (Android) expose ProDLNative.playMedia; the web build simply
+   * never reveals the button, so one UI serves every target.
+   */
+  function mountPlayButton(refs, event) {
+    if (!refs.playLink) return;
+    var native = window.ProDLNative;
+    var supported = native && typeof native.playMedia === 'function';
+    refs.playLink.hidden = !supported;
+    if (!supported) return;
+    refs.playLink.onclick = function () {
+      var filename = (event.file && event.file.filename) || '';
+      var info = state.info || {};
+      var segments = info.sponsorblock && info.sponsorblock.segments ? info.sponsorblock.segments : [];
+      var audioOnly = /\.(mp3|m4a|opus|oga|flac|wav)$/i.test(filename);
+      native.playMedia(
+        config.absolute(event.file.download_url || ''),
+        info.title || filename || 'ProDL',
+        info.thumbnail || null,
+        audioOnly,
+        segments.length ? JSON.stringify(segments) : null
+      );
+    };
+  }
+
   function mountProgress(refs, task, label, kind) {
     refs.panel.hidden = false;
     refs.actions.hidden = true;
@@ -410,6 +437,7 @@
             refs.saveLink.href = config.absolute(event.file.download_url || task.file_url);
             refs.saveLink.setAttribute('download', event.file.filename || '');
             refs.saveLink.textContent = 'Save ' + (event.file.filename || 'file');
+            mountPlayButton(refs, event);
             refs.actions.hidden = false;
           }
           toast(kind === 'convert' ? 'Conversion finished' : 'Download finished', 'success');
