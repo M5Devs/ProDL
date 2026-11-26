@@ -43,7 +43,8 @@ def health(request: Request, settings: SettingsDep) -> HealthResponse:
         writable = os.access(settings.download_dir, os.W_OK)
 
     yt_dlp_available = bool(yt_dlp.version.__version__)
-    status = "ok" if (writable and yt_dlp_available) else "degraded"
+    # API_SPEC: "ok" only when yt-dlp, ffmpeg and a writable download dir exist.
+    status = "ok" if (writable and yt_dlp_available and ffmpeg.available) else "degraded"
 
     return HealthResponse(
         status=status,

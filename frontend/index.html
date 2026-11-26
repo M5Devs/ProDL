@@ -2,88 +2,297 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
   <meta name="referrer" content="no-referrer" />
+  <meta name="theme-color" content="#0b0f16" />
   <title>ProDL — Download Anything</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="ProDL home">
-      <span class="logo" aria-hidden="true">▶</span>
-      <span class="brand-text">
-        <strong>ProDL</strong>
-        <small>download anything</small>
-      </span>
-    </a>
-    <div class="topbar-actions">
-      <button id="healthPill" class="pill" type="button" title="Server status">
-        <span class="dot" aria-hidden="true"></span><span id="healthText">checking…</span>
-      </button>
-      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" title="Settings">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5m7.43-2.53a7.6 7.6 0 0 0 .07-.97 7.6 7.6 0 0 0-.07-.97l2.11-1.63a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65a7.3 7.3 0 0 0-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.57 11a7.6 7.6 0 0 0 0 1.94l-2.11 1.63a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1a7.3 7.3 0 0 0 1.69.98l.38 2.65A.49.49 0 0 0 10 22h4a.49.49 0 0 0 .49-.42l.38-2.65a7.3 7.3 0 0 0 1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64Z"/></svg>
-      </button>
-    </div>
-  </header>
-
-  <main>
-    <nav class="tabs" role="tablist" aria-label="Mode">
-      <button class="tab active" id="tabBtnDownload" data-tab="download" role="tab" aria-selected="true" aria-controls="tab-download">Download</button>
-      <button class="tab" id="tabBtnConvert" data-tab="convert" role="tab" aria-selected="false" aria-controls="tab-convert">Convert</button>
-    </nav>
-
-    <!-- ── Download ─────────────────────────────────────────────────────── -->
-    <section class="tab-panel active" id="tab-download" role="tabpanel" aria-labelledby="tabBtnDownload">
-      <form class="search-row" id="searchForm" autocomplete="off">
-        <input id="searchInput" type="search" placeholder="Search videos — no API key required" aria-label="Search videos" />
-        <button class="btn" type="submit" id="searchBtn">Search</button>
-      </form>
-
-      <div class="results" id="searchResults" hidden></div>
-
-      <form class="card url-row" id="urlForm" autocomplete="off">
-        <input id="urlInput" type="url" placeholder="…or paste a video URL" aria-label="Video URL" />
-        <button class="btn primary" type="submit" id="fetchBtn">Fetch</button>
-      </form>
-
-      <div class="loader" id="loader" hidden>
-        <span class="spinner" aria-hidden="true"></span>
-        <span id="loaderText">Fetching info…</span>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 20h14" />
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong>ProDL</strong>
+          <small>media downloader</small>
+        </span>
       </div>
+      <button id="healthPill" class="pill" type="button" title="Server status">
+        <span class="dot" aria-hidden="true"></span><span id="healthText">checking…</span><span class="pill-extra" id="healthExtra"></span>
+      </button>
+    </header>
 
-      <div class="alert error" id="errorBox" role="alert" hidden></div>
+    <main class="views">
+      <!-- ── Explore ──────────────────────────────────────────────────── -->
+      <section class="view active" id="view-explore" aria-label="Explore">
+        <form class="smart-bar" id="smartForm" autocomplete="off">
+          <span class="smart-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+            </svg>
+          </span>
+          <input id="smartInput" type="text" inputmode="search" spellcheck="false"
+                 placeholder="Search or paste a link" aria-label="Search or paste a URL" />
+          <button class="chip-btn" id="pasteBtn" type="button" title="Paste from clipboard">Paste</button>
+          <button class="chip-btn primary" id="smartBtn" type="submit">Search</button>
+        </form>
+        <p class="smart-hint" id="smartHint">No API key needed · links open straight in the inspector</p>
 
-      <article class="card result" id="resultCard" hidden>
-        <div class="meta">
+        <div class="loader" id="loader" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="loaderText">Working…</span>
+        </div>
+
+        <div class="alert error" id="errorBox" role="alert" hidden></div>
+
+        <div class="section-head" id="resultsHead" hidden>
+          <h2 id="resultsTitle">Results</h2>
+          <span class="muted" id="resultsCount"></span>
+        </div>
+        <div class="cards" id="searchResults" hidden></div>
+
+        <div class="empty" id="emptyState">
+          <span class="empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="3" y="4" width="18" height="16" rx="3" /><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <strong>Nothing loaded yet</strong>
+          <p>Search for a video, or paste a link yt-dlp understands. Everything runs on your own device — no account, no ads.</p>
+        </div>
+      </section>
+
+      <!-- ── Downloads ────────────────────────────────────────────────── -->
+      <section class="view" id="view-downloads" aria-label="Downloads">
+        <div class="section-head">
+          <h2>Activity</h2>
+          <span class="muted" id="downloadsCount">idle</span>
+        </div>
+        <div class="cards" id="taskList"></div>
+        <div class="empty" id="downloadsEmpty">
+          <span class="empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 20h14" />
+            </svg>
+          </span>
+          <strong>No transfers yet</strong>
+          <p>Downloads and conversions appear here with live progress, speed and ETA.</p>
+        </div>
+      </section>
+
+      <!-- ── Convert ──────────────────────────────────────────────────── -->
+      <section class="view" id="view-convert" aria-label="Convert">
+        <div class="section-head"><h2>Convert &amp; trim</h2><span class="muted">FFmpeg on-device</span></div>
+        <form class="card form" id="convertForm" autocomplete="off">
+          <div class="alert info" id="convertHint" hidden></div>
+          <label class="dropzone" id="dropzone" for="convertFile">
+            <input id="convertFile" type="file" accept="audio/*,video/*" hidden />
+            <span class="dropzone-title" id="dropzoneTitle">Choose a media file</span>
+            <small>or drop it here · the file never leaves this device</small>
+          </label>
+
+          <label class="field">
+            <span>Source</span>
+            <select id="convertSource">
+              <option value="file">Uploaded file</option>
+              <option value="task">Finished download</option>
+            </select>
+          </label>
+          <label class="field" id="convertTaskField" hidden>
+            <span>Download</span>
+            <select id="convertTaskSelect"></select>
+          </label>
+
+          <div class="grid-2">
+            <label class="field">
+              <span>Target format</span>
+              <select id="convertFormat">
+                <option value="mp3">MP3</option>
+                <option value="m4a">M4A</option>
+                <option value="opus">Opus</option>
+                <option value="wav">WAV</option>
+                <option value="flac">FLAC</option>
+                <option value="mp4">MP4</option>
+                <option value="webm">WebM</option>
+                <option value="gif">GIF</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Audio bitrate</span>
+              <select id="convertBitrate">
+                <option value="128k">128 kbps</option>
+                <option value="192k" selected>192 kbps</option>
+                <option value="256k">256 kbps</option>
+                <option value="320k">320 kbps</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Trim start (s)</span>
+              <input id="trimStart" type="number" min="0" step="0.1" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Trim end (s)</span>
+              <input id="trimEnd" type="number" min="0" step="0.1" placeholder="—" />
+            </label>
+          </div>
+
+          <button class="btn primary block" id="convertBtn" type="submit" disabled>Convert</button>
+        </form>
+
+        <section class="card progress" id="convertProgress" hidden>
+          <div class="progress-head">
+            <strong id="convertProgressTitle">Converting…</strong>
+            <span class="progress-percent" id="convertProgressPercent">0%</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill" id="convertProgressFill"></div></div>
+          <div class="progress-meta" id="convertProgressMeta"></div>
+          <div class="progress-actions" id="convertProgressActions" hidden>
+            <button class="btn ghost" id="convertPlayLink" type="button" hidden>Play</button>
+            <a class="btn primary" id="convertSaveLink" download>Save file</a>
+            <button class="btn ghost" id="convertProgressClose" type="button">Close</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ── Settings ─────────────────────────────────────────────────── -->
+      <section class="view" id="view-settings" aria-label="Settings">
+        <div class="section-head"><h2>Engines</h2><span class="muted" id="engineStatus">—</span></div>
+        <div class="engines">
+          <article class="engine" id="engineYtdlp">
+            <header><span class="engine-name">yt-dlp</span><span class="state" id="ytdlpState">—</span></header>
+            <strong id="ytdlpValue">—</strong>
+            <small id="ytdlpNote">reading /api/health…</small>
+          </article>
+          <article class="engine" id="engineFfmpeg">
+            <header><span class="engine-name">FFmpeg</span><span class="state" id="ffmpegState">—</span></header>
+            <strong id="ffmpegValue">—</strong>
+            <small id="ffmpegNote">reading /api/health…</small>
+          </article>
+          <article class="engine" id="engineSponsor">
+            <header><span class="engine-name">SponsorBlock</span><span class="state" id="sponsorState">—</span></header>
+            <strong id="sponsorValue">—</strong>
+            <small id="sponsorNote">reading /api/health…</small>
+          </article>
+          <article class="engine" id="engineCookies">
+            <header><span class="engine-name">Cookies</span><span class="state" id="cookiesState">—</span></header>
+            <strong id="cookiesValue">—</strong>
+            <small id="cookiesNote">reading /api/health…</small>
+          </article>
+        </div>
+
+        <div class="section-head"><h2>Connection</h2><span class="muted" id="apiLabel">—</span></div>
+        <div class="card form">
+          <label class="field">
+            <span>API base URL</span>
+            <input id="apiBaseInput" type="url" placeholder="http://127.0.0.1:8000" spellcheck="false" />
+          </label>
+          <p class="hint">Empty = same origin. The Android shell injects its own loopback URL.</p>
+          <div class="row">
+            <button class="btn primary" id="saveApiBtn" type="button">Save</button>
+            <button class="btn ghost" id="resetApiBtn" type="button">Reset</button>
+          </div>
+        </div>
+
+        <div class="section-head"><h2>YouTube account</h2></div>
+        <div class="card form">
+          <p class="hint">
+            Age-restricted videos and your own private playlists need a signed-in session.
+            Cookies stay on this device and are never uploaded anywhere else.
+          </p>
+          <button class="btn" id="linkYouTubeBtn" type="button">Link YouTube account</button>
+          <p class="hint" id="youTubeHint">—</p>
+          <details class="advanced">
+            <summary>Paste a Netscape cookie file instead</summary>
+            <textarea id="cookiesInput" rows="5" spellcheck="false" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;0&#9;SID&#9;…"></textarea>
+            <div class="row">
+              <button class="btn primary" id="saveCookiesBtn" type="button">Save cookies</button>
+              <button class="btn ghost" id="clearCookiesBtn" type="button">Delete</button>
+              <span class="muted" id="cookiesStatus">—</span>
+            </div>
+          </details>
+        </div>
+
+        <details class="card advanced" id="diagnostics">
+          <summary>Advanced diagnostics</summary>
+          <p class="hint">Raw <code>GET /api/health</code> response.</p>
+          <pre class="health-json" id="healthJson">—</pre>
+          <div class="row"><button class="btn ghost" id="refreshHealthBtn" type="button">Refresh</button></div>
+        </details>
+
+        <footer class="footer">
+          <span>Open source · AGPL v3 ·</span>
+          <a href="https://github.com/M5Devs/ProDL" target="_blank" rel="noopener">GitHub</a>
+        </footer>
+      </section>
+    </main>
+
+    <nav class="bottomnav" aria-label="Primary">
+      <button class="navitem active" id="navExplore" type="button" data-view="explore" aria-current="page">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+        <span>Explore</span>
+      </button>
+      <button class="navitem" id="navDownloads" type="button" data-view="downloads">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10" /><path d="m7 11 5 5 5-5" /><path d="M5 20h14" /></svg>
+        <span>Downloads</span>
+        <span class="nav-badge" id="navBadge" hidden></span>
+      </button>
+      <button class="navitem" id="navConvert" type="button" data-view="convert">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11l-3-3" /><path d="M20 17H9l3 3" /></svg>
+        <span>Convert</span>
+      </button>
+      <button class="navitem" id="navSettings" type="button" data-view="settings">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 19.4 11a2 2 0 1 1 0 4Z" /></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ── Format inspector (bottom sheet) ───────────────────────────────── -->
+  <dialog class="sheet" id="inspector">
+    <form method="dialog" class="sheet-inner">
+      <header class="sheet-head">
+        <div class="sheet-meta">
           <img class="thumb" id="thumb" alt="" referrerpolicy="no-referrer" />
-          <div class="meta-text">
+          <div>
             <h2 id="videoTitle">Untitled</h2>
             <div class="badges" id="videoBadges"></div>
           </div>
         </div>
+        <button class="icon-btn" value="close" aria-label="Close inspector">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </header>
 
-        <div id="sponsorNote" class="alert info" hidden></div>
+      <div class="alert info" id="sponsorNote" hidden></div>
 
-        <div id="videoSection">
-          <p class="section-label">Video quality</p>
-          <div class="format-grid" id="formatGrid"></div>
-        </div>
+      <section id="videoSection">
+        <p class="section-label">Video quality</p>
+        <div class="format-grid" id="formatGrid"></div>
+      </section>
 
-        <div id="audioSection">
-          <p class="section-label">Audio only</p>
-          <button class="option-btn" id="audioBtn" type="button">
-            <span class="option-icon" aria-hidden="true">♪</span>
-            <span>
-              <strong>Best quality audio</strong>
-              <small id="audioHint">MP3 · 192 kbps</small>
-            </span>
-          </button>
-        </div>
+      <section id="audioSection">
+        <p class="section-label">Audio only</p>
+        <button class="option-btn" id="audioBtn" type="button">
+          <span class="option-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V6l10-2v12" /><circle cx="6" cy="18" r="3" /><circle cx="16" cy="16" r="3" /></svg>
+          </span>
+          <span>
+            <strong>Extract audio</strong>
+            <small id="audioHint">MP3 · audio only</small>
+          </span>
+        </button>
+      </section>
 
-        <details class="advanced">
-          <summary>Options</summary>
-          <div class="advanced-body">
+      <details class="advanced">
+        <summary>Options</summary>
+        <div class="advanced-body">
+          <div class="grid-2">
             <label class="field">
               <span>Audio format</span>
               <select id="audioFormat">
@@ -94,142 +303,44 @@
                 <option value="wav">WAV</option>
               </select>
             </label>
-            <label class="check"><input type="checkbox" id="optSubtitles" /> Download subtitles</label>
-            <label class="check"><input type="checkbox" id="optEmbedSubs" /> Embed subtitles in file</label>
-            <label class="check"><input type="checkbox" id="optSponsorBlock" checked /> Cut SponsorBlock segments</label>
-            <label class="check"><input type="checkbox" id="optThumbnail" /> Embed thumbnail</label>
-            <label class="check"><input type="checkbox" id="optCookies" checked /> Use saved cookies</label>
+            <label class="field">
+              <span>Parallel fragments</span>
+              <select id="optFragments">
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+                <option value="4">4</option>
+                <option value="8">8</option>
+              </select>
+            </label>
           </div>
-        </details>
+          <label class="check"><input type="checkbox" id="optSubtitles" /> Download subtitles</label>
+          <label class="check"><input type="checkbox" id="optEmbedSubs" /> Embed subtitles in the file</label>
+          <label class="check"><input type="checkbox" id="optSponsorBlock" checked /> Cut SponsorBlock segments</label>
+          <label class="check"><input type="checkbox" id="optThumbnail" /> Embed thumbnail</label>
+          <label class="check"><input type="checkbox" id="optCookies" checked /> Use saved cookies</label>
+        </div>
+      </details>
 
+      <div class="sheet-actions">
+        <button class="btn ghost" id="playInfoBtn" type="button" hidden>Play ad-free</button>
         <button class="btn primary block" id="downloadBtn" type="button" disabled>Download</button>
-      </article>
-
-      <section class="card progress" id="progressPanel" hidden>
-        <div class="progress-head">
-          <strong id="progressTitle">Working…</strong>
-          <span class="progress-percent" id="progressPercent">0%</span>
-        </div>
-        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
-        <div class="progress-meta" id="progressMeta"></div>
-        <div class="progress-actions" id="progressActions" hidden>
-          <button class="btn ghost" id="playLink" type="button" hidden>Play</button>
-          <a class="btn primary" id="saveLink" download>Save file</a>
-          <button class="btn ghost" id="progressClose" type="button">Close</button>
-        </div>
-      </section>
-    </section>
-
-    <!-- ── Convert ──────────────────────────────────────────────────────── -->
-    <section class="tab-panel" id="tab-convert" role="tabpanel" aria-labelledby="tabBtnConvert">
-      <div class="card">
-        <p class="section-label">Convert / trim a local file</p>
-        <label class="dropzone" id="dropzone" for="convertFile">
-          <input id="convertFile" type="file" accept="audio/*,video/*" hidden />
-          <span class="dropzone-title" id="dropzoneTitle">Choose a media file</span>
-          <small>or drop it here · converted on this device</small>
-        </label>
-
-        <div class="convert-grid">
-          <label class="field">
-            <span>Target format</span>
-            <select id="convertFormat">
-              <option value="mp3">MP3</option>
-              <option value="m4a">M4A</option>
-              <option value="opus">Opus</option>
-              <option value="wav">WAV</option>
-              <option value="flac">FLAC</option>
-              <option value="mp4">MP4</option>
-              <option value="webm">WebM</option>
-              <option value="gif">GIF</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Audio bitrate</span>
-            <select id="convertBitrate">
-              <option value="128k">128 kbps</option>
-              <option value="192k" selected>192 kbps</option>
-              <option value="256k">256 kbps</option>
-              <option value="320k">320 kbps</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Trim start (s)</span>
-            <input id="trimStart" type="number" min="0" step="0.1" placeholder="0" />
-          </label>
-          <label class="field">
-            <span>Trim end (s)</span>
-            <input id="trimEnd" type="number" min="0" step="0.1" placeholder="—" />
-          </label>
-        </div>
-
-        <button class="btn primary block" id="convertBtn" type="button" disabled>Convert</button>
       </div>
-
-      <section class="card progress" id="convertProgress" hidden>
-        <div class="progress-head">
-          <strong id="convertProgressTitle">Converting…</strong>
-          <span class="progress-percent" id="convertProgressPercent">0%</span>
-        </div>
-        <div class="progress-track"><div class="progress-fill" id="convertProgressFill"></div></div>
-        <div class="progress-meta" id="convertProgressMeta"></div>
-        <div class="progress-actions" id="convertProgressActions" hidden>
-          <button class="btn ghost" id="convertPlayLink" type="button" hidden>Play</button>
-          <a class="btn primary" id="convertSaveLink" download>Save file</a>
-          <button class="btn ghost" id="convertProgressClose" type="button">Close</button>
-        </div>
-      </section>
-    </section>
-  </main>
-
-  <footer>
-    <span>Open source · AGPL v3 ·</span>
-    <a href="https://github.com/M5Devs/ProDL" target="_blank" rel="noopener">GitHub</a>
-    <span class="sep">·</span>
-    <span id="apiLabel">API: same origin</span>
-  </footer>
-
-  <!-- ── Settings ───────────────────────────────────────────────────────── -->
-  <dialog id="settingsDialog" class="dialog">
-    <form method="dialog" class="dialog-inner">
-      <header class="dialog-head">
-        <h2>Settings</h2>
-        <button class="icon-btn" value="close" aria-label="Close">✕</button>
-      </header>
-
-      <section class="dialog-section">
-        <p class="section-label">Backend connection</p>
-        <label class="field">
-          <span>API base URL</span>
-          <input id="apiBaseInput" type="url" placeholder="http://127.0.0.1:8000" spellcheck="false" />
-        </label>
-        <p class="hint">Leave empty to use the same origin. Also settable with <code>?api=…</code>.</p>
-        <div class="row">
-          <button class="btn primary" id="saveApiBtn" type="button">Save</button>
-          <button class="btn ghost" id="resetApiBtn" type="button">Reset</button>
-        </div>
-      </section>
-
-      <section class="dialog-section">
-        <p class="section-label">Server status</p>
-        <pre class="health-json" id="healthJson">—</pre>
-        <div class="row"><button class="btn ghost" id="refreshHealthBtn" type="button">Refresh</button></div>
-      </section>
-
-      <section class="dialog-section">
-        <p class="section-label">Cookies (Netscape format)</p>
-        <p class="hint">
-          Stored only on this device with owner-only permissions. Used for age-restricted
-          videos and your own private playlists. Never sent anywhere else.
-        </p>
-        <textarea id="cookiesInput" rows="6" spellcheck="false" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	0	SID	…"></textarea>
-        <div class="row">
-          <button class="btn primary" id="saveCookiesBtn" type="button">Save cookies</button>
-          <button class="btn ghost" id="clearCookiesBtn" type="button">Delete</button>
-          <span class="hint" id="cookiesStatus">—</span>
-        </div>
-      </section>
     </form>
+  </dialog>
+
+  <!-- ── Web/desktop player (used when no native bridge exists) ────────── -->
+  <dialog class="player" id="playerOverlay">
+    <div class="player-inner">
+      <header class="player-head">
+        <strong id="playerTitle">Playback</strong>
+        <button class="icon-btn" id="playerClose" type="button" aria-label="Close player">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </header>
+      <video id="playerVideo" controls playsinline preload="metadata"></video>
+      <audio id="playerAudio" controls preload="metadata" hidden></audio>
+      <p class="hint" id="playerHint"></p>
+    </div>
   </dialog>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>

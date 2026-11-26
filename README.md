@@ -193,6 +193,24 @@ its dependency graph. Each release ships one APK per architecture, so a phone
 downloads ~60–70 MB instead of the 217 MB fat build; CI publishes them as
 separate artifacts.
 
+## The UI
+
+`frontend/` is a four-view single-page app — **Explore** (one bar that searches
+*or* takes any link), **Downloads** (live WebSocket/SSE progress with speed,
+ETA and per-task save/play/cancel), **Convert** (upload or reuse a finished
+download, trim, re-encode) and **Settings** (live engine cards straight from
+`/api/health`, API base URL, cookies, raw health JSON under *Advanced
+diagnostics*).
+
+It ships with **zero external requests**: no CDN, no Google Fonts, no icon
+fonts — the icons are inline SVG, the CSS is one local file, and every state in
+the UI comes from the API. That is what lets the same bundle run untouched
+inside the Android WebView. Two native hooks are used when they exist:
+`window.ProDLNative.playMedia(...)` for ad-free playback (falls back to an
+HTML5 `<video>`/`<audio>` element with SponsorBlock skipping) and
+`window.ProDLNative.openYouTubeLogin()` for the in-app sign-in (the button is
+disabled with an explanation elsewhere).
+
 Resolution order for the API base URL:
 `?api=` → `localStorage` → `window.__PRODL_API_BASE__` → `window.PRODL_CONFIG.apiBaseUrl`
 → same origin (http) → `http://127.0.0.1:8000` (file://).
