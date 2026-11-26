@@ -98,3 +98,65 @@ def test_cors_wildcard_default_is_documented():
     spec = SPEC.read_text()
     assert "PRODL_CORS_ORIGINS" in spec
     assert "Origin: null" in spec
+
+
+# ── Watch view & search filters (YouTube-style UI) ────────────────────────
+def test_watch_view_is_wired(index_html, app_js):
+    ids = element_ids(index_html)
+    for name in (
+        "view-watch",
+        "watchThumb",
+        "watchTitle",
+        "watchChannel",
+        "watchPlay",
+        "watchPlayBtn",
+        "watchDownload",
+        "watchBack",
+        "watchRelated",
+        "watchRelatedHead",
+    ):
+        assert name in ids, f"missing watch element #{name}"
+    # Every watch control must have a listener, or the view is dead markup.
+    for handler in ("watchBack", "watchDownload", "watchPlay", "watchPlayBtn"):
+        assert f"$('{handler}').addEventListener" in app_js, f"{handler} has no listener"
+    assert "function openWatch(" in app_js
+    assert "function renderWatch(" in app_js
+
+
+def test_search_filters_exist_and_are_documented(index_html, app_js):
+    chips = re.findall(r'data-type="([a-z]+)"', index_html)
+    assert chips == ["all", "videos", "channels", "playlists"]
+    assert 'id="searchFilters"' in index_html
+    assert "$('searchFilters').addEventListener" in app_js
+    # The filter must travel to the API, not only decorate the UI.
+    assert re.search(r"api\.search\(\s*query,\s*12,\s*state\.searchType", app_js)
+    spec = SPEC.read_text()
+    assert "| `type` |" in spec
+    for value in ("`all`", "`videos`", "`channels`", "`playlists`"):
+        assert value in spec
+
+
+def test_format_picker_groups_by_resolution(app_js):
+    """Itags must be folded into one button per resolution, labelled by it."""
+    body = re.search(r"function renderFormats\(formats\) \{(.*?)\n  \}", app_js, re.DOTALL)
+    assert body, "renderFormats not found"
+    source = body.group(1)
+    assert "groups[" in source
+    assert "res.textContent = group.label" in source
+    # The old label was the raw stream note, which read "video only · avc1".
+    assert "format.note || format.resolution" not in source
+
+
+def test_related_items_are_documented():
+    spec = SPEC.read_text()
+    assert '"related"' in spec
+    assert "kind" in spec and "item_count" in spec
+
+
+def test_android_health_reports_a_transcoder_not_a_bundled_ffmpeg():
+    spec = SPEC.read_text()
+    assert "`transcoder`" in spec
+    kotlin = ROOT / "android/app/src/main/java/app/prodl/server/LocalServer.kt"
+    source = kotlin.read_text()
+    assert "transcoder = ComponentStatus(" in source
+    assert "ffmpeg = ComponentStatus(" not in source

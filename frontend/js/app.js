@@ -14,6 +14,9 @@
     convertSupported: true,
     tasks: [],
     searchAbort: null,
+    searchType: 'all',
+    lastQuery: '',
+    watch: null,
     view: 'explore'
   };
 
@@ -111,7 +114,10 @@
       button.classList.toggle('active', active);
       if (active) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
-      $('view-' + key).classList.toggle('active', active);
+    });
+    // "watch" is reached from a card, so it has no bottom-nav entry of its own.
+    Array.prototype.forEach.call(document.querySelectorAll('.view'), function (section) {
+      section.classList.toggle('active', section.id === 'view-' + name);
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -149,24 +155,27 @@
       var np = health.newpipe || null;
       var yt = health.yt_dlp || {};
       var ff = health.ffmpeg || {};
+      var tr = health.transcoder || null;
+      var transcoderOk = !!(tr && tr.available) || !!ff.available;
       var cookies = health.cookies || {};
       var features = health.features || {};
       var sponsorOk = features.sponsorblock !== false;
       var npReady = !!(np && np.available);
       var ytReady = !!yt.available;
       var canSearch = features.search !== false && (npReady || ytReady);
-      var ok = health.status === 'ok' && canSearch && ff.available;
+      var ok = health.status === 'ok' && canSearch && transcoderOk;
       var primary = npReady ? 'NewPipe' : 'yt-dlp';
 
       pill.className = 'pill ' + (ok ? 'ok' : (canSearch ? 'warn' : 'bad'));
-      $('healthText').textContent = ok ? 'Ready' : canSearch ? 'No FFmpeg' : 'engine not ready';
+      $('healthText').textContent = ok ? 'Ready' : canSearch ? 'No transcoder' : 'engine not ready';
       $('healthExtra').textContent = ' · ' + primary + (npReady || ytReady ? ' ✓' : ' ✕') +
-        ' · FFmpeg ' + (ff.available ? '✓' : '✕');
+        ' · ' + (tr ? 'Transcoder' : 'FFmpeg') + ' ' + (transcoderOk ? '✓' : '✕');
       pill.title = [
         'ProDL ' + health.version + ' · ' + health.platform,
         (np ? 'NewPipe: ' + (np.available ? (np.version || 'ready') : (np.note || 'unavailable')) : null),
         'yt-dlp: ' + (yt.available ? (yt.version || 'ready') : (yt.note || 'unavailable')),
-        'FFmpeg: ' + (ff.available ? (ff.version || 'ready') : 'unavailable'),
+        tr ? 'Transcoder: ' + (tr.available ? (tr.version || 'ready') : 'unavailable')
+           : 'FFmpeg: ' + (ff.available ? (ff.version || 'ready') : 'unavailable'),
         'SponsorBlock: ' + (sponsorOk ? 'available' : 'unavailable'),
         'Cookies: ' + (cookies.configured ? cookies.cookie_count + ' stored' : 'none')
       ].filter(Boolean).join('\n');
@@ -189,11 +198,22 @@
       $('ytdlpValue').title = yt.version || '';
       $('ytdlpNote').textContent = yt.note || (yt.path ? 'path: ' + yt.path : 'no details reported');
 
-      $('ffmpegState').textContent = engineLabel(ff);
-      setEngineState($('engineFfmpeg'), engineClass(ff));
-      $('ffmpegValue').textContent = ff.available ? (shortVersion(ff.version) || 'bundled') : 'unavailable';
-      $('ffmpegValue').title = ff.version || '';
-      $('ffmpegNote').textContent = ff.note || (ff.path ? 'path: ' + ff.path : 'conversion disabled without FFmpeg');
+      // Android reports `transcoder` (platform codecs); the desktop reports
+      // `ffmpeg`. Only the card that exists is shown.
+      $('engineFfmpeg').hidden = !!tr;
+      if (tr) {
+        $('transcoderState').textContent = engineLabel(tr);
+        setEngineState($('engineTranscoder'), engineClass(tr));
+        $('transcoderValue').textContent = tr.available ? (shortVersion(tr.version) || 'native') : 'unavailable';
+        $('transcoderValue').title = tr.version || '';
+        $('transcoderNote').textContent = tr.note || 'MediaMuxer + Media3 + MP3';
+      } else {
+        $('ffmpegState').textContent = engineLabel(ff);
+        setEngineState($('engineFfmpeg'), engineClass(ff));
+        $('ffmpegValue').textContent = ff.available ? (shortVersion(ff.version) || 'bundled') : 'unavailable';
+        $('ffmpegValue').title = ff.version || '';
+        $('ffmpegNote').textContent = ff.note || (ff.path ? 'path: ' + ff.path : 'conversion disabled without FFmpeg');
+      }
 
       $('sponsorState').textContent = sponsorOk ? 'ready' : 'off';
       setEngineState($('engineSponsor'), sponsorOk ? 'ok' : 'warn');
@@ -220,9 +240,8 @@
       $('healthExtra').textContent = '';
       pill.title = err.message;
       $('engineStatus').textContent = 'engine unreachable';
-      ['engineNewpipe', 'engineYtdlp', 'engineFfmpeg', 'engineSponsor', 'engineCookies'].forEach(function (id) {
-        setEngineState($(id), 'bad');
-      });
+      ['engineNewpipe', 'engineYtdlp', 'engineFfmpeg', 'engineTranscoder', 'engineSponsor', 'engineCookies']
+        .forEach(function (id) { setEngineState($(id), 'bad'); });
       $('newpipeValue').textContent = '—';
       $('ytdlpValue').textContent = '—';
       $('ffmpegValue').textContent = '—';
@@ -277,25 +296,28 @@
     });
   }
 
-  function runSearch(query) {
+  function runSearch(query, type) {
+    if (type) state.searchType = type;
+    state.lastQuery = query;
     if (state.searchAbort) state.searchAbort.abort();
     state.searchAbort = typeof AbortController === 'function' ? new AbortController() : null;
 
     $('smartBtn').disabled = true;
-    setLoader(true, 'Searching…');
+    setLoader(true, state.searchType === 'all' ? 'Searching…' : 'Searching ' + state.searchType + '…');
     $('emptyState').hidden = true;
     $('searchResults').hidden = true;
     $('searchResults').textContent = '';
     $('resultsHead').hidden = true;
+    $('searchFilters').hidden = false;
 
-    api.search(query, 12, state.searchAbort ? state.searchAbort.signal : undefined)
+    api.search(query, 12, state.searchType, state.searchAbort ? state.searchAbort.signal : undefined)
       .then(function (payload) {
         if (!payload.results.length) {
           $('emptyState').hidden = false;
-          showError('No results for “' + query + '”.');
+          showError(payload.note || 'No ' + state.searchType + ' for “' + query + '”.');
           return;
         }
-        renderSearchResults(payload.results, query);
+        renderSearchResults(payload, query);
       })
       .catch(function (err) {
         if (err.name === 'AbortError') return;
@@ -308,54 +330,187 @@
       });
   }
 
-  function renderSearchResults(results, query) {
+  var KIND_LABEL = { channel: 'Channel', playlist: 'Playlist' };
+
+  function fmtCount(value) {
+    if (!value && value !== 0) return null;
+    if (value >= 1e9) return (value / 1e9).toFixed(1) + 'B';
+    if (value >= 1e6) return (value / 1e6).toFixed(1) + 'M';
+    if (value >= 1e3) return (value / 1e3).toFixed(1) + 'K';
+    return String(value);
+  }
+
+  /** One card per result. Videos open the Watch view; channels and playlists
+   *  open on YouTube, since this app downloads single videos. */
+  function resultCard(item) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'result-item' + (item.kind && item.kind !== 'video' ? ' kind-' + item.kind : '');
+
+    if (item.thumbnail) {
+      var img = document.createElement('img');
+      img.src = item.thumbnail;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      button.appendChild(img);
+    }
+
+    var main = document.createElement('div');
+    main.className = 'row-main';
+
+    var title = document.createElement('strong');
+    title.textContent = item.title || 'Untitled';
+    if (item.kind && item.kind !== 'video') {
+      var kind = document.createElement('span');
+      kind.className = 'kind-badge';
+      kind.textContent = KIND_LABEL[item.kind] || item.kind;
+      title.appendChild(kind);
+    }
+    if (item.is_live) {
+      var live = document.createElement('span');
+      live.className = 'live';
+      live.textContent = 'LIVE';
+      title.appendChild(live);
+    }
+    main.appendChild(title);
+
+    var meta = document.createElement('small');
+    var bits = [];
+    if (item.kind === 'channel') {
+      if (item.item_count) bits.push(fmtCount(item.item_count) + ' subscribers');
+    } else if (item.kind === 'playlist') {
+      if (item.item_count) bits.push(item.item_count + ' videos');
+      if (item.uploader) bits.push(item.uploader);
+    } else {
+      if (item.duration) bits.push(fmtDuration(item.duration));
+      if (item.uploader) bits.push(item.uploader);
+      if (item.view_count) bits.push(item.view_count.toLocaleString() + ' views');
+    }
+    meta.textContent = bits.join(' · ') || item.url;
+    main.appendChild(meta);
+
+    // Quick download stays on the card: the Watch view is one tap away, not a detour.
+    if (!item.kind || item.kind === 'video') {
+      var quick = document.createElement('span');
+      quick.className = 'quick-dl';
+      quick.textContent = '⟱';
+      quick.title = 'Download this video';
+      quick.setAttribute('role', 'button');
+      quick.setAttribute('aria-label', 'Download this video');
+      quick.addEventListener('click', function (event) {
+        event.stopPropagation();
+        openInfo(item.url);
+      });
+      button.appendChild(quick);
+    }
+
+    button.addEventListener('click', function () {
+      if (item.kind && item.kind !== 'video') {
+        window.open(item.url, '_blank', 'noopener');
+        toast((KIND_LABEL[item.kind] || 'Item') + ' opens on YouTube', 'info');
+        return;
+      }
+      openWatch(item.url);
+    });
+    return button;
+  }
+
+  function renderSearchResults(payload, query) {
     var container = $('searchResults');
     container.textContent = '';
+    var type = payload.type && payload.type !== 'all' ? ' · ' + payload.type : '';
     $('resultsTitle').textContent = 'Results for “' + query + '”';
-    $('resultsCount').textContent = results.length + ' found';
+    $('resultsCount').textContent = payload.results.length + ' found' + type;
     $('resultsHead').hidden = false;
+    payload.results.forEach(function (item) {
+      container.appendChild(resultCard(item));
+    });
+    container.hidden = false;
+  }
 
-    results.forEach(function (item) {
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'result-item';
+  // ── watch view ───────────────────────────────────────────────────────────
+  /** Detail view: ad-free playback, channel, download, related videos. */
+  function openWatch(url) {
+    clearError();
+    showWatch({ title: 'Loading…', webpage_url: url, formats: [] });
+    switchView('watch');
+    if (state.info && state.info.webpage_url === url) {
+      renderWatch(state.info);
+      return Promise.resolve(state.info);
+    }
+    return api.info(url, { sponsorblock: true })
+      .then(function (info) {
+        state.info = info;
+        renderWatch(info);
+        return info;
+      })
+      .catch(function (err) {
+        showError(err.message);
+        $('watchHint').textContent = err.message;
+        $('watchHint').hidden = false;
+      });
+  }
 
+  function showWatch(info) {
+    var thumb = $('watchThumb');
+    if (info.thumbnail) {
+      thumb.src = info.thumbnail;
+      thumb.hidden = false;
+    } else {
+      thumb.removeAttribute('src');
+      thumb.hidden = true;
+    }
+    $('watchTitle').textContent = info.title || 'Untitled';
+    $('watchBadges').textContent = '';
+    $('watchChannel').textContent = info.uploader || info.channel || '';
+    $('watchHint').hidden = true;
+    $('watchRelated').textContent = '';
+    $('watchRelated').hidden = true;
+    $('watchRelatedHead').hidden = true;
+    state.watch = info;
+  }
+
+  function renderWatch(info) {
+    showWatch(info);
+    var playable = playableStream(info);
+    $('watchPlay').hidden = !playable;
+    $('watchPlayBtn').hidden = !playable;
+
+    (info.related || []).forEach(function (item) {
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'result-item';
       if (item.thumbnail) {
         var img = document.createElement('img');
         img.src = item.thumbnail;
         img.alt = '';
         img.loading = 'lazy';
         img.referrerPolicy = 'no-referrer';
-        button.appendChild(img);
+        card.appendChild(img);
       }
-
       var main = document.createElement('div');
       main.className = 'row-main';
-
       var title = document.createElement('strong');
       title.textContent = item.title || 'Untitled';
-      if (item.is_live) {
-        var live = document.createElement('span');
-        live.className = 'live';
-        live.textContent = 'LIVE';
-        title.appendChild(live);
-      }
       main.appendChild(title);
-
       var meta = document.createElement('small');
-      var bits = [];
-      if (item.duration) bits.push(fmtDuration(item.duration));
-      if (item.uploader) bits.push(item.uploader);
-      if (item.view_count) bits.push(item.view_count.toLocaleString() + ' views');
-      meta.textContent = bits.join(' · ') || item.url;
+      meta.textContent = [item.duration ? fmtDuration(item.duration) : null, item.uploader]
+        .filter(Boolean).join(' · ') || 'related';
       main.appendChild(meta);
-
-      button.appendChild(main);
-      button.addEventListener('click', function () { openInfo(item.url); });
-      container.appendChild(button);
+      card.appendChild(main);
+      card.addEventListener('click', function () { openWatch(item.url); });
+      $('watchRelated').appendChild(card);
     });
 
-    container.hidden = false;
+    var related = (info.related || []).length;
+    $('watchRelatedCount').textContent = related ? related + ' suggestions' : '';
+    $('watchRelatedHead').hidden = related === 0;
+    $('watchRelated').hidden = related === 0;
+    if (!related) {
+      $('watchHint').textContent = 'No related videos — this engine does not return them for this source.';
+      $('watchHint').hidden = false;
+    }
   }
 
   // ── inspector ────────────────────────────────────────────────────────────
@@ -429,20 +584,71 @@
     $('playInfoBtn').hidden = !playableStream(info);
   }
 
+  var CODECS = [
+    [/avc|h\.?264/i, 'H.264'],
+    [/hev|hvc|h\.?265/i, 'H.265'],
+    [/av01|\bav1\b/i, 'AV1'],
+    [/vp0?9/i, 'VP9'],
+    [/vp0?8/i, 'VP8'],
+    [/mp4a|aac/i, 'AAC'],
+    [/opus/i, 'Opus'],
+    [/vorbis/i, 'Vorbis']
+  ];
+
+  function codecLabel(format) {
+    var raw = [format.vcodec, format.acodec].filter(Boolean).join(' ');
+    if (!raw) return null;
+    for (var i = 0; i < CODECS.length; i += 1) {
+      if (CODECS[i][0].test(raw)) return CODECS[i][1];
+    }
+    return raw.split('.')[0].toUpperCase().slice(0, 8);
+  }
+
+  /**
+   * "1920x1080" + 60fps -> "1080p60", "256x144" -> "144p".
+   *
+   * The Python backend reports pixel dimensions, the Android engine already
+   * reports "1080p60"; both must end up as the same YouTube-style label so the
+   * picker reads like the site it mirrors.
+   */
+  function formatLabel(format) {
+    var raw = format.resolution || '';
+    if (/^\d+p\d*$/.test(raw)) return raw;
+    var height = heightOf(format);
+    if (!height) return raw || 'video';
+    var fps = format.fps;
+    var suffix = '';
+    if (fps && fps > 30) suffix = fps >= 58 ? '60' : fps === 50 ? '50' : String(fps);
+    return height + 'p' + suffix;
+  }
+
+  /**
+   * One button per resolution. YouTube returns a dozen video-only itags whose
+   * old labels all read "video only · avc1"; grouping by the resolution label
+   * ("1080p60", "720p") keeps the best variant of each and says how many were
+   * folded into it.
+   */
   function renderFormats(formats) {
     var grid = $('formatGrid');
     grid.textContent = '';
-    var seen = {};
 
-    var usable = formats
-      .filter(function (format) { return format.has_video && format.resolution !== 'audio only'; })
-      .filter(function (format) {
-        var key = (format.resolution || '') + '|' + (format.fps || '');
-        if (seen[key]) return false;
-        seen[key] = true;
-        return true;
-      })
-      .sort(function (a, b) { return heightOf(a) - heightOf(b); });
+    var groups = {};
+    formats
+      .filter(function (format) { return format.has_video; })
+      .forEach(function (format) {
+        var label = formatLabel(format);
+        var size = format.filesize || 0;
+        var existing = groups[label];
+        if (!existing) {
+          groups[label] = { label: label, format: format, count: 1 };
+        } else {
+          existing.count += 1;
+          if (size > (existing.format.filesize || 0)) existing.format = format;
+        }
+      });
+
+    var usable = Object.keys(groups).map(function (key) { return groups[key]; })
+      .sort(function (a, b) { return heightOf(a.format) - heightOf(b.format); });
 
     if (!usable.length) {
       var note = document.createElement('p');
@@ -453,25 +659,28 @@
       return;
     }
 
-    usable.forEach(function (format) {
+    usable.forEach(function (group) {
+      var format = group.format;
       var button = document.createElement('button');
       button.type = 'button';
       button.className = 'fmt-btn';
 
       var res = document.createElement('span');
       res.className = 'res';
-      res.textContent = format.note || format.resolution || 'video';
+      res.textContent = group.label;
       button.appendChild(res);
 
       var sub = document.createElement('span');
       sub.className = 'sub';
       sub.textContent = [
-        format.ext,
-        format.fps ? format.fps + ' fps' : null,
-        format.filesize ? fmtBytes(format.filesize) : null
+        (format.ext || 'mp4').toUpperCase(),
+        codecLabel(format),
+        format.filesize ? fmtBytes(format.filesize) : null,
+        group.count > 1 ? '+' + (group.count - 1) + ' more' : null
       ].filter(Boolean).join(' · ');
       button.appendChild(sub);
 
+      button.title = format.note || '';
       button.addEventListener('click', function () { selectFormat(format, button); });
       grid.appendChild(button);
     });
@@ -513,6 +722,13 @@
       return format.has_video && format.has_audio && format.direct_url;
     });
     return (muxed && muxed.direct_url) || info.best_video_url || info.best_audio_url || '';
+  }
+
+  /** Play whatever /api/info offered, skipping SponsorBlock segments when known. */
+  function playFromInfo(info) {
+    if (!info) return;
+    var segments = info.sponsorblock && info.sponsorblock.segments ? info.sponsorblock.segments : [];
+    playMedia(playableStream(info), info.title, info.thumbnail, false, segments);
   }
 
   function playMedia(url, title, thumbnail, audioOnly, segments) {
@@ -1132,11 +1348,30 @@
     });
     $('downloadBtn').addEventListener('click', startDownload);
     $('playInfoBtn').addEventListener('click', function () {
-      var info = state.info;
-      if (!info) return;
-      var segments = info.sponsorblock && info.sponsorblock.segments ? info.sponsorblock.segments : [];
-      playMedia(playableStream(info), info.title, info.thumbnail, false, segments);
+      playFromInfo(state.info);
     });
+
+    // Search filters: All · Videos · Channels · Playlists.
+    $('searchFilters').addEventListener('click', function (event) {
+      var chip = event.target.closest ? event.target.closest('.chip') : null;
+      if (!chip) return;
+      var type = chip.getAttribute('data-type') || 'all';
+      Array.prototype.forEach.call($('searchFilters').querySelectorAll('.chip'), function (node) {
+        var active = node === chip;
+        node.classList.toggle('active', active);
+        node.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      state.searchType = type;
+      if (state.lastQuery) runSearch(state.lastQuery, type);
+    });
+
+    // Watch view.
+    $('watchBack').addEventListener('click', function () { switchView('explore'); });
+    $('watchDownload').addEventListener('click', function () {
+      if (state.watch && state.watch.webpage_url) openInfo(state.watch.webpage_url);
+    });
+    $('watchPlay').addEventListener('click', function () { playFromInfo(state.watch); });
+    $('watchPlayBtn').addEventListener('click', function () { playFromInfo(state.watch); });
 
     $('convertForm').addEventListener('submit', startConvert);
     $('convertSource').addEventListener('change', function () { refreshConvertSource(); });

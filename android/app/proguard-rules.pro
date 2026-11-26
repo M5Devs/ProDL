@@ -22,3 +22,11 @@
 -dontwarn com.grack.nanojson.**
 -dontwarn org.intellij.lang.annotations.**
 -dontwarn org.jetbrains.annotations.**
+
+# jump3r (LGPL-2.1): pure-Java LAME MP3 encoder. Only the low-level
+# de.sciss.jump3r.mp3 classes are used; the `lowlevel` helpers depend on
+# javax.sound.sampled, which Android does not ship.
+-keep class de.sciss.jump3r.mp3.** { *; }
+-keep class de.sciss.jump3r.mpg.** { *; }
+-dontwarn de.sciss.jump3r.**
+-dontwarn javax.sound.**

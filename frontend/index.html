@@ -44,6 +44,13 @@
         </form>
         <p class="smart-hint" id="smartHint">No API key needed · links open straight in the inspector</p>
 
+        <div class="chips" id="searchFilters" role="tablist" aria-label="Search type" hidden>
+          <button class="chip active" type="button" role="tab" data-type="all" aria-selected="true">All</button>
+          <button class="chip" type="button" role="tab" data-type="videos" aria-selected="false">Videos</button>
+          <button class="chip" type="button" role="tab" data-type="channels" aria-selected="false">Channels</button>
+          <button class="chip" type="button" role="tab" data-type="playlists" aria-selected="false">Playlists</button>
+        </div>
+
         <div class="loader" id="loader" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span id="loaderText">Working…</span>
@@ -69,6 +76,36 @@
       </section>
 
       <!-- ── Downloads ────────────────────────────────────────────────── -->
+      <!-- ── Watch (video detail + related) ───────────────────────────── -->
+      <section class="view" id="view-watch" aria-label="Watch">
+        <button class="watch-back" id="watchBack" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7" /></svg>
+          Back to results
+        </button>
+
+        <div class="watch-hero">
+          <img id="watchThumb" alt="" referrerpolicy="no-referrer" />
+          <button class="watch-play" id="watchPlay" type="button" aria-label="Play ad-free">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+          </button>
+        </div>
+
+        <h1 class="watch-title" id="watchTitle">—</h1>
+        <div class="badges" id="watchBadges"></div>
+        <p class="watch-channel" id="watchChannel">—</p>
+
+        <div class="row">
+          <button class="btn primary" id="watchDownload" type="button">Download</button>
+          <button class="btn ghost" id="watchPlayBtn" type="button">Play ad-free</button>
+        </div>
+        <div class="alert info" id="watchHint" hidden></div>
+
+        <div class="section-head" id="watchRelatedHead" hidden>
+          <h2>Up next</h2><span class="muted" id="watchRelatedCount"></span>
+        </div>
+        <div class="cards related" id="watchRelated" hidden></div>
+      </section>
+
       <section class="view" id="view-downloads" aria-label="Downloads">
         <div class="section-head">
           <h2>Activity</h2>
@@ -178,6 +215,11 @@
             <header><span class="engine-name">FFmpeg</span><span class="state" id="ffmpegState">—</span></header>
             <strong id="ffmpegValue">—</strong>
             <small id="ffmpegNote">reading /api/health…</small>
+          </article>
+          <article class="engine" id="engineTranscoder" hidden>
+            <header><span class="engine-name">Transcoder</span><span class="state" id="transcoderState">—</span></header>
+            <strong id="transcoderValue">—</strong>
+            <small id="transcoderNote">reading /api/health…</small>
           </article>
           <article class="engine" id="engineSponsor">
             <header><span class="engine-name">SponsorBlock</span><span class="state" id="sponsorState">—</span></header>
@@ -303,8 +345,6 @@
               <select id="audioFormat">
                 <option value="mp3">MP3</option>
                 <option value="m4a">M4A (AAC)</option>
-                <option value="opus">Opus</option>
-                <option value="flac">FLAC</option>
                 <option value="wav">WAV</option>
               </select>
             </label>
@@ -320,8 +360,8 @@
           </div>
           <label class="check"><input type="checkbox" id="optSubtitles" /> Download subtitles</label>
           <label class="check"><input type="checkbox" id="optEmbedSubs" /> Embed subtitles in the file</label>
-          <label class="check"><input type="checkbox" id="optSponsorBlock" checked /> Cut SponsorBlock segments</label>
-          <label class="check"><input type="checkbox" id="optThumbnail" /> Embed thumbnail</label>
+          <label class="check"><input type="checkbox" id="optSponsorBlock" checked /> Mark SponsorBlock segments</label>
+          <label class="check"><input type="checkbox" id="optThumbnail" /> Save thumbnail</label>
           <label class="check"><input type="checkbox" id="optCookies" checked /> Use saved cookies</label>
         </div>
       </details>

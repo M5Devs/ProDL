@@ -2,12 +2,9 @@ package app.prodl.core
 
 import android.content.Context
 import android.util.Log
-import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
-import com.yausername.youtubedl_android.YoutubeDLResponse
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -18,10 +15,14 @@ import kotlinx.serialization.json.JsonObject
 import java.io.File
 
 /**
- * Thin coroutine wrapper around youtubedl-android (yt-dlp + ffmpeg).
+ * Thin coroutine wrapper around youtubedl-android (yt-dlp on bundled CPython).
  *
- * The bundled payload has to be unpacked on first launch, so init runs off the
- * main thread. Every step is bounded and reports the step that stalled: a
+ * There is no ffmpeg module any more: muxing, trimming and MP3 encoding are done
+ * by [MediaPipeline] with platform codecs, which removed a 35 MB payload and the
+ * whole "unpacking ffmpeg" failure mode from start-up.
+ *
+ * The Python payload still has to be unpacked on first launch, so init runs off
+ * the main thread. Every step is bounded and reports the step that stalled: a
  * health check can say "initialising: unpacking Python" or "failed: timed out
  * probing Python" but never "initialising" forever.
  */
@@ -42,20 +43,10 @@ class YtDlp(context: Context) {
     private var cachedVersion: String? = null
 
     @Volatile
-    private var ffmpegError: String? = null
-
-    @Volatile
     private var lastStep: String = "idle"
-
-    @Volatile
-    var ffmpegPath: String? = null
-        private set
 
     /** yt-dlp/Python failure, if any — surfaced by `/api/health`. */
     val initializationError: String? get() = initError
-
-    /** FFmpeg failure, if any. Downloads still work without it. */
-    val ffmpegInitializationError: String? get() = ffmpegError
 
     /** What init is doing right now, for the health note. */
     val step: String get() = lastStep
@@ -73,32 +64,7 @@ class YtDlp(context: Context) {
     suspend fun attemptInit(): Boolean = initMutex.withLock {
         if (initDone && initError == null) return@withLock true
         initError = null
-        // Both engines unpack their own payload; run them side by side so
-        // ffmpeg's 35 MB unzip does not delay Python.
-        val pythonDone = coroutineScope {
-            val ffmpegJob = launch { initFfmpeg() }
-            val done = initPython()
-            ffmpegJob.join()
-            done
-        }
-        pythonDone
-    }
-
-    /**
-     * Unpack ffmpeg. Optional: a broken ffmpeg must not take search or
-     * download down with it, so it fails on its own and is reported separately.
-     */
-    private fun initFfmpeg() {
-        lastStep = "unpacking ffmpeg"
-        try {
-            FFmpeg.getInstance().init(appContext)
-            ffmpegPath = FfmpegRunner(appContext).binary()?.absolutePath
-            ffmpegError = null
-            Log.i(TAG, "ffmpeg ready: ${ffmpegPath ?: "binary not found yet"}")
-        } catch (t: Throwable) {
-            ffmpegError = describe(t)
-            Log.e(TAG, "ffmpeg init failed", t)
-        }
+        initPython()
     }
 
     /**
@@ -232,13 +198,18 @@ class YtDlp(context: Context) {
         arguments: List<Pair<String, String?>>,
         processId: String,
         onProgress: (Float, Long, String) -> Unit,
-    ): YoutubeDLResponse = withContext(Dispatchers.IO) {
+    ): YtDlpResult = withContext(Dispatchers.IO) {
         awaitReady()
         val request = YoutubeDLRequest(url)
         arguments.forEach { (key, value) -> if (value == null) request.addOption(key) else request.addOption(key, value) }
-        YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
-            onProgress(progress, eta, line)
+        val response = try {
+            YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
+                onProgress(progress, eta, line)
+            }
+        } catch (canceled: YoutubeDL.CanceledException) {
+            throw EngineCanceledException(canceled.message ?: "canceled")
         }
+        YtDlpResult(response.exitCode, response.out, response.err)
     }
 
     fun cancel(processId: String): Boolean =

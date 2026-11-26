@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Maps yt-dlp's `--dump-single-json` output onto the API_SPEC.md v1.0.0 models.
+ * Maps yt-dlp's `--dump-single-json` output onto the API_SPEC.md v1.1.0 models.
  * The shape is the same one the Python backend parses, so both targets agree.
  */
 object YtDlpJson {

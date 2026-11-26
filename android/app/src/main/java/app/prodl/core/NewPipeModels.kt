@@ -43,6 +43,7 @@ data class NpMedia(
     val videoOnly: List<NpStream> = emptyList(),
     val audio: List<NpStream> = emptyList(),
     val subtitles: List<SubtitleDto> = emptyList(),
+    val related: List<RelatedItem> = emptyList(),
 )
 
 /**
@@ -119,6 +120,8 @@ object NewPipeMapper {
         duration: Double?,
         uploader: String?,
         viewCount: Long?,
+        kind: String = "video",
+        itemCount: Long? = null,
     ): SearchItem = SearchItem(
         id = videoIdOf(url) ?: url,
         title = name,
@@ -129,18 +132,40 @@ object NewPipeMapper {
         viewCount = viewCount?.takeIf { it >= 0 },
         isLive = false,
         extractor = "YouTube",
+        kind = kind,
+        itemCount = itemCount?.takeIf { it >= 0 },
     )
 
-    fun formats(media: NpMedia): List<VideoFormatDto> {
+    fun relatedItem(url: String, name: String, thumbnail: String?, duration: Double?, uploader: String?): RelatedItem =
+        RelatedItem(
+            id = videoIdOf(url) ?: url,
+            title = name,
+            url = url,
+            thumbnail = thumbnail,
+            duration = duration,
+            uploader = uploader,
+        )
+
+    /**
+     * Format list for the inspector.
+     *
+     * `resolution` is a human label (`1080p60`, `720p`) because the old
+     * `"video only · avc1"` note was identical for a dozen buttons; `note`
+     * carries the codec/kind for the secondary line, and `filesize` an estimate
+     * from bitrate × duration so the user can compare 720p with 1080p.
+     */
+    fun formats(media: NpMedia, durationSeconds: Double? = media.durationSeconds): List<VideoFormatDto> {
         val out = mutableListOf<VideoFormatDto>()
         media.muxed.forEach { stream ->
-            out += dto(stream, NpFormatId.muxed(stream.itag), video = true, audio = true, "muxed")
+            out += dto(stream, NpFormatId.muxed(stream.itag), video = true, audio = true, durationSeconds)
         }
-        media.videoOnly.sortedByDescending { it.height ?: 0 }.forEach { stream ->
-            out += dto(stream, NpFormatId.video(stream.itag), video = true, audio = false, "video only")
+        media.videoOnly.sortedWith(
+            compareByDescending<NpStream> { it.height ?: 0 }.thenByDescending { it.fps ?: 0 },
+        ).forEach { stream ->
+            out += dto(stream, NpFormatId.video(stream.itag), video = true, audio = false, durationSeconds)
         }
         media.audio.sortedByDescending { it.bitrateKbps ?: 0 }.forEach { stream ->
-            out += dto(stream, NpFormatId.audio(stream.itag), video = false, audio = true, "audio")
+            out += dto(stream, NpFormatId.audio(stream.itag), video = false, audio = true, durationSeconds)
         }
         return out
     }
@@ -150,25 +175,45 @@ object NewPipeMapper {
         formatId: String,
         video: Boolean,
         audio: Boolean,
-        label: String,
-    ): VideoFormatDto = VideoFormatDto(
-        formatId = formatId,
-        ext = stream.ext,
-        resolution = stream.resolution ?: if (video) null else "audio only",
-        filesize = null,
-        note = listOfNotNull(label, stream.codec?.substringBefore('.')).joinToString(" · "),
-        hasVideo = video,
-        hasAudio = audio,
-        vcodec = if (video) stream.codec else null,
-        acodec = if (audio) stream.codec else null,
-        fps = stream.fps?.takeIf { it > 0 }?.toDouble(),
-        tbr = stream.bitrateKbps?.toDouble(),
-        abr = if (!video) stream.bitrateKbps?.toDouble() else null,
-        protocol = "https",
-        directUrl = stream.url,
-        width = null,
-        height = stream.height,
-    )
+        durationSeconds: Double?,
+    ): VideoFormatDto {
+        val codec = MediaTargets.codecName(stream.codec, stream.mimeType)
+        val label = if (video) {
+            MediaTargets.resolutionLabel(stream.height, stream.fps)
+                ?: stream.resolution
+                ?: "video"
+        } else {
+            "audio"
+        }
+        val size = MediaTargets.estimateBytes(durationSeconds, stream.bitrateKbps)
+        return VideoFormatDto(
+            formatId = formatId,
+            ext = stream.ext,
+            resolution = label,
+            filesize = size,
+            // Secondary line: "video only · H.264" / "audio · AAC 128 kbps".
+            note = listOfNotNull(
+                when {
+                    video && audio -> "video + audio"
+                    video -> "video only"
+                    else -> "audio"
+                },
+                codec,
+                if (!video) stream.bitrateKbps?.takeIf { it > 0 }?.let { "$it kbps" } else null,
+            ).joinToString(" · "),
+            hasVideo = video,
+            hasAudio = audio,
+            vcodec = if (video) stream.codec else null,
+            acodec = if (audio) stream.codec else null,
+            fps = stream.fps?.takeIf { it > 0 }?.toDouble(),
+            tbr = stream.bitrateKbps?.toDouble(),
+            abr = if (!video) stream.bitrateKbps?.toDouble() else null,
+            protocol = "https",
+            directUrl = stream.url,
+            width = null,
+            height = stream.height,
+        )
+    }
 
     fun info(
         media: NpMedia,
@@ -177,7 +222,7 @@ object NewPipeMapper {
     ): InfoResponse {
         val muxed = bestMuxed(media)
         val video = bestVideo(media)
-        val formats = formats(media)
+        val formats = formats(media, media.durationSeconds)
         return InfoResponse(
             title = media.title,
             duration = media.durationSeconds,
@@ -201,6 +246,7 @@ object NewPipeMapper {
             bestAudioUrl = bestAudio(media)?.url ?: formats.firstOrNull { !it.hasVideo && it.directUrl != null }?.directUrl,
             sponsorblock = sponsorBlock,
             cookiesUsed = cookiesUsed,
+            related = media.related,
         )
     }
 
@@ -216,10 +262,15 @@ object NewPipeMapper {
      * exists: that pair copies into MP4, while Opus would force MKV.
      */
     fun bestAudioFor(media: NpMedia, video: NpStream): NpStream? {
-        if (!FfmpegArgs.isMp4Audio(video.ext)) return bestAudio(media)
-        return media.audio.filter { FfmpegArgs.isMp4Audio(it.ext) }.maxByOrNull { it.bitrateKbps ?: 0 }
+        // An MP4 video pairs with AAC: that pair is a MediaMuxer copy, while
+        // Opus in MP4 would need a re-encode.
+        if (!isMp4Audio(video.ext)) return bestAudio(media)
+        return media.audio.filter { isMp4Audio(it.ext) }.maxByOrNull { it.bitrateKbps ?: 0 }
             ?: bestAudio(media)
     }
+
+    private fun isMp4Audio(ext: String): Boolean =
+        ext.lowercase(Locale.US) in setOf("m4a", "aac", "mp4")
 
     /**
      * Resolve a client's `format_id` (or an audio-only request) into the streams

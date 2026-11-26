@@ -36,6 +36,22 @@ repository, as required.
 | protobuf-javalite (YouTube response protos, via NewPipeExtractor) | BSD-3-Clause |
 | nanojson (via NewPipeExtractor) | Apache-2.0 / MIT |
 | desugar_jdk_libs_nio (Java 8+ APIs on API 26) | Apache-2.0 |
+| **jump3r** (`de.sciss:jump3r:1.0.5`) | **LGPL-2.1-or-later** — <https://github.com/Sciss/jump3r> |
+
+### jump3r (LGPL-2.1-or-later)
+
+MP3 is the one audio format Android's own codecs cannot write, so the app bundles
+[jump3r](https://github.com/Sciss/jump3r), a pure-Java port of LAME 3.100, and
+calls only its `de.sciss.jump3r.mp3` encoder classes (the `lowlevel` helpers need
+`javax.sound.sampled`, which Android does not ship).
+
+jump3r is licensed LGPL-2.1-or-later. The "or later" clause lets it be used
+under LGPL-3.0, which permits combination with this AGPL-3.0 application. The
+LGPL's relinking requirement is met the same way as for the GPL components
+above: the complete corresponding source of ProDL (including the exact
+`android/` build files and dependency pins) is published in this repository, so
+anyone can rebuild the APK against a modified or replaced jump3r. The classes are
+kept unmodified, and the library's licence text ships with its Maven artifact.
 
 ### NewPipeExtractor (GPL-3.0-or-later)
 

@@ -19,7 +19,7 @@ enum class TaskStatus {
 }
 
 /**
- * Engine or tool state. `state` is additive over API_SPEC v1.0.0 so a client can
+ * Engine or tool state. `state` is additive over API_SPEC v1.1.0 so a client can
  * tell "still unpacking" apart from "broken" without parsing `note`.
  */
 @Serializable
@@ -53,8 +53,14 @@ data class HealthResponse(
     @SerialName("yt_dlp") val ytDlp: ComponentStatus,
     /** NewPipeExtractor (Android only): the primary YouTube engine. */
     val newpipe: ComponentStatus? = null,
-    val ffmpeg: ComponentStatus,
-    val ffprobe: ComponentStatus,
+    /** ffmpeg, on backends that still shell out to a binary (desktop/Python). */
+    val ffmpeg: ComponentStatus? = null,
+    val ffprobe: ComponentStatus? = null,
+    /**
+     * Native media pipeline (Android only): MediaMuxer + Media3 + LAME.
+     * Present instead of [ffmpeg] when the device does the work with its codecs.
+     */
+    val transcoder: ComponentStatus? = null,
     @SerialName("js_runtime") val jsRuntime: ComponentStatus,
     val cookies: CookiesStatus,
     val features: Map<String, Boolean>,
@@ -71,6 +77,10 @@ data class SearchItem(
     @SerialName("view_count") val viewCount: Long? = null,
     @SerialName("is_live") val isLive: Boolean = false,
     val extractor: String? = null,
+    /** `video` (default), `channel` or `playlist`. */
+    val kind: String = "video",
+    /** Channels: subscriber count. Playlists: item count. */
+    @SerialName("item_count") val itemCount: Long? = null,
 )
 
 @Serializable
@@ -79,6 +89,10 @@ data class SearchResponse(
     val limit: Int,
     val count: Int,
     val results: List<SearchItem>,
+    /** Echo of `type=all|videos|channels|playlists`. */
+    val type: String = "all",
+    /** Set when a filter is not available on this backend, so the UI can say why. */
+    val note: String? = null,
 )
 
 @Serializable
@@ -149,6 +163,19 @@ data class InfoResponse(
     @SerialName("best_audio_url") val bestAudioUrl: String? = null,
     val sponsorblock: SponsorBlockInfo = SponsorBlockInfo(),
     @SerialName("cookies_used") val cookiesUsed: Boolean = false,
+    /** Suggested videos for the Watch view; empty on engines that do not provide them. */
+    val related: List<RelatedItem> = emptyList(),
+)
+
+@Serializable
+data class RelatedItem(
+    val id: String,
+    val title: String,
+    val url: String,
+    val thumbnail: String? = null,
+    val duration: Double? = null,
+    val uploader: String? = null,
+    @SerialName("view_count") val viewCount: Long? = null,
 )
 
 @Serializable

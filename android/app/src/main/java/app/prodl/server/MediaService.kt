@@ -4,11 +4,11 @@ import android.util.Log
 import app.prodl.core.ConvertRequest
 import app.prodl.core.CookieStore
 import app.prodl.core.DownloadRequest
-import app.prodl.core.FfmpegArgs
-import app.prodl.core.FfmpegRunner
 import app.prodl.core.FileRef
 import app.prodl.core.FormatSelector
 import app.prodl.core.InfoResponse
+import app.prodl.core.MediaPipeline
+import app.prodl.core.MediaTargets
 import app.prodl.core.MimeTypes
 import app.prodl.core.NpFormatId
 import app.prodl.core.NpSelection
@@ -17,6 +17,7 @@ import app.prodl.core.NewPipeEngine
 import app.prodl.core.NewPipeMapper
 import app.prodl.core.ProgressEvent
 import app.prodl.core.ProgressLine
+import app.prodl.core.EngineCanceledException
 import app.prodl.core.SearchResponse
 import app.prodl.core.ServerConfig
 import app.prodl.core.SponsorBlockClient
@@ -26,7 +27,6 @@ import app.prodl.core.YtDlp
 import app.prodl.core.YtDlpException
 import app.prodl.core.YtDlpJson
 import app.prodl.core.cleanError
-import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,8 +35,9 @@ import java.io.File
 import java.util.Locale
 
 /**
- * Everything that talks to the extraction engines and ffmpeg. Routes stay thin
- * and only validate input, mirroring the Python backend's service layer.
+ * Everything that talks to the extraction engines and the native media
+ * pipeline. Routes stay thin and only validate input, mirroring the Python
+ * backend's service layer.
  *
  * Engine routing (API_SPEC.md §5–7):
  * - YouTube → NewPipeExtractor first, yt-dlp if it is not ready or fails.
@@ -49,22 +50,45 @@ class MediaService(
     private val tasks: TaskManager,
     private val yt: YtDlp,
     private val newpipe: NewPipeEngine,
-    private val ffmpeg: FfmpegRunner,
+    private val pipeline: MediaPipeline,
     private val cookies: CookieStore,
     private val sponsor: SponsorBlockClient,
     private val scope: CoroutineScope,
 ) {
-    suspend fun search(query: String, limit: Int): SearchResponse {
+    suspend fun search(query: String, limit: Int, type: String = "all"): SearchResponse {
         val effectiveLimit = limit.coerceIn(1, config.searchLimitMax)
-        newPipeOrNull { newpipe.search(query, effectiveLimit) }
+        val filter = normalizeType(type)
+        newPipeOrNull { newpipe.search(query, effectiveLimit, filter) }
             ?.takeIf { it.count > 0 }
             ?.let { return it }
+
+        // yt-dlp's `ytsearch` only returns videos. Channels and playlists are a
+        // YouTube-only feature here, and saying so beats an empty list.
+        if (filter == "channels" || filter == "playlists") {
+            return SearchResponse(
+                query = query,
+                limit = effectiveLimit,
+                count = 0,
+                results = emptyList(),
+                type = filter,
+                note = "$filter search needs the on-device YouTube engine; " +
+                    "this server can only search videos.",
+            )
+        }
 
         val json = yt.dumpJson(
             "ytsearch$effectiveLimit:$query",
             listOf("--flat-playlist" to null),
         )
-        return YtDlpJson.search(query, effectiveLimit, json)
+        val response = YtDlpJson.search(query, effectiveLimit, json)
+        return response.copy(type = filter)
+    }
+
+    private fun normalizeType(type: String?): String = when (type?.trim()?.lowercase(Locale.US)) {
+        "videos", "video" -> "videos"
+        "channels", "channel" -> "channels"
+        "playlists", "playlist" -> "playlists"
+        else -> "all"
     }
 
     suspend fun info(url: String, withSponsorBlock: Boolean, categories: List<String>?): InfoResponse {
@@ -107,7 +131,7 @@ class MediaService(
 
     /**
      * Direct-stream download: one muxed file, or a video track plus an audio
-     * track joined by ffmpeg. No Python involved, so this path works while
+     * track joined by MediaMuxer. No Python involved, so this path works while
      * yt-dlp is still unpacking — or broken beyond repair.
      */
     private fun startNewPipeDownload(request: DownloadRequest): Task {
@@ -210,39 +234,54 @@ class MediaService(
         return dest
     }
 
-    /** Audio-only download: keep the track when the container matches, else transcode. */
+    /** Audio-only download: keep the track when the container matches, else convert. */
     private suspend fun finishAudioOnly(
         task: Task,
         request: DownloadRequest,
         audioFile: File,
         workDir: File,
+    ): File = toAudioFormat(task, audioFile, workDir, request.audioFormat, request.audioQuality)
+
+    /**
+     * Convert [file] to [format] with the native pipeline, reporting the
+     * post-processing stage through the task's progress stream.
+     */
+    private suspend fun toAudioFormat(
+        task: Task,
+        file: File,
+        workDir: File,
+        format: String,
+        quality: String,
     ): File {
-        val wanted = FormatSelector.audioFormat(request.audioFormat)
-        if (MimeTypes.extensionOf(audioFile.name) == wanted) return audioFile
+        val wanted = FormatSelector.audioFormat(format)
+        if (MimeTypes.extensionOf(file.name) == wanted) return file
 
         task.publish(
-            ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 95.0, message = "Converting to $wanted")
+            ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 90.0, message = "Converting to $wanted")
         )
-        val binary = ffmpeg.binary() ?: throw YtDlpException("ffmpeg is not available on this device")
         val output = File(workDir, "audio.$wanted")
-        val exit = ffmpeg.run(
-            binary,
-            FfmpegArgs.build(
-                input = audioFile,
-                output = output,
-                format = wanted,
-                audioBitrate = "${FormatSelector.audioQuality(request.audioQuality)}k",
-            ),
-            onProcess = { task.ffmpegProcess = it },
-        ) { }
-        if (exit != 0 || !output.isFile || output.length() == 0L) {
-            throw YtDlpException("ffmpeg could not convert the audio track (exit $exit)")
-        }
-        audioFile.delete()
+        pipeline.convert(
+            input = file,
+            output = output,
+            format = wanted,
+            audioBitrateKbps = MediaPipeline.bitrateKbps(FormatSelector.audioQuality(quality) + "k"),
+            onStage = { stage -> task.publish(ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 90.0, message = stage)) },
+            onProgress = { fraction ->
+                task.publish(
+                    ProgressEvent(
+                        status = TaskStatus.POSTPROCESSING,
+                        percent = 90 + fraction * 9,
+                        message = "Converting to $wanted",
+                    )
+                )
+            },
+            shouldCancel = { task.cancelRequested.get() },
+        )
+        file.delete()
         return output
     }
 
-    /** Join video-only + audio-only without re-encoding, into a container that fits. */
+    /** Join video-only + audio-only with MediaMuxer (copy) or Media3 (re-encode). */
     private suspend fun muxTracks(
         task: Task,
         videoFile: File,
@@ -250,40 +289,27 @@ class MediaService(
         workDir: File,
         selection: NpSelection,
     ): File {
-        val binary = ffmpeg.binary() ?: throw YtDlpException(
-            "ffmpeg is required to join separate video and audio streams on this device"
-        )
         task.publish(
-            ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 80.0, message = "Muxing video and audio")
+            ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 80.0, message = "Preparing mux")
         )
-        val ext = FfmpegArgs.muxExtension(
-            MimeTypes.extensionOf(videoFile.name),
-            MimeTypes.extensionOf(audioFile.name),
-        )
-        val output = File(workDir, "muxed.$ext")
-        var lastPublishAt = 0L
-        val duration = ffmpeg.durationSeconds(videoFile)
-        val exit = ffmpeg.run(
-            binary,
-            FfmpegArgs.mux(videoFile, audioFile, output),
-            onProcess = { task.ffmpegProcess = it },
-        ) { line ->
-            val position = FfmpegArgs.parseOutTime(line)
-            val now = System.currentTimeMillis()
-            if (position != null && duration != null && duration > 0 && now - lastPublishAt >= 400) {
-                lastPublishAt = now
+        val output = pipeline.mux(
+            video = videoFile,
+            audio = audioFile,
+            outputDir = workDir,
+            onStage = { stage ->
+                task.publish(ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 85.0, message = stage))
+            },
+            onProgress = { fraction ->
                 task.publish(
                     ProgressEvent(
                         status = TaskStatus.POSTPROCESSING,
-                        percent = (80 + position / duration * 19).coerceIn(80.0, 99.0),
-                        message = "Muxing video and audio (${selection.audio?.ext ?: ext})",
+                        percent = (85 + fraction * 14).coerceIn(85.0, 99.0),
+                        message = "Muxing video and audio",
                     )
                 )
-            }
-        }
-        if (exit != 0 || !output.isFile || output.length() == 0L) {
-            throw YtDlpException("ffmpeg could not mux the tracks into $ext")
-        }
+            },
+            shouldCancel = { task.cancelRequested.get() },
+        )
         videoFile.delete()
         audioFile.delete()
         return output
@@ -307,9 +333,8 @@ class MediaService(
                     ProgressEvent(status = TaskStatus.DOWNLOADING, percent = 0.0, message = "Resolving media")
                 )
                 val cookieFile = if (request.useCookies) cookies.fileOrNull() else null
-                val ffmpegPath = yt.ffmpegPath ?: ffmpeg.binary()?.absolutePath
                 workDir = File(config.downloadDir, ".prodl-${task.id}").apply { mkdirs() }
-                val arguments = FormatSelector.buildArguments(request, workDir, cookieFile, ffmpegPath)
+                val arguments = FormatSelector.buildArguments(request, workDir, cookieFile)
                 task.processId = task.id
 
                 var lastPublishAt = 0L
@@ -352,8 +377,13 @@ class MediaService(
                 task.publish(
                     ProgressEvent(status = TaskStatus.POSTPROCESSING, percent = 100.0, message = "Finishing file")
                 )
-                val artifact = pickArtifact(workDir, request.audioOnly)
+                var artifact = pickArtifact(workDir, request.audioOnly)
                     ?: throw YtDlpException("yt-dlp finished but produced no media file")
+                // yt-dlp no longer runs `-x`: the audio track it downloads is
+                // m4a/opus, so the requested format is produced here.
+                if (request.audioOnly) {
+                    artifact = toAudioFormat(task, artifact, workDir, request.audioFormat, request.audioQuality)
+                }
                 val target = moveYtDlpArtifact(artifact, workDir)
                 task.finish(
                     FileRef(
@@ -364,7 +394,7 @@ class MediaService(
                     ),
                     target,
                 )
-            } catch (canceled: YoutubeDL.CanceledException) {
+            } catch (canceled: EngineCanceledException) {
                 task.markCanceled()
             } catch (canceled: CancellationException) {
                 if (!task.isDone) task.markCanceled()
@@ -386,53 +416,45 @@ class MediaService(
                 if (input == null || !input.isFile) {
                     throw IllegalArgumentException("Provide a task_id or a path inside the download directory")
                 }
-                val format = request.targetFormat.lowercase(Locale.US)
-                if (format !in FfmpegArgs.allTargets) {
-                    throw IllegalArgumentException("Unsupported target_format: ${request.targetFormat}")
-                }
+                val format = MediaTargets.normalize(request.targetFormat)
+                MediaTargets.unsupportedReason(format)?.let { throw IllegalArgumentException(it) }
                 config.ensureDirectories()
-                val output = MimeTypes.uniqueTarget(config.downloadDir, FfmpegArgs.outputName(input, format))
-                val binary = ffmpeg.binary() ?: throw YtDlpException("ffmpeg is not available on this device")
-                val duration = ffmpeg.durationSeconds(input)
+                val output = MimeTypes.uniqueTarget(
+                    config.downloadDir,
+                    "${input.nameWithoutExtension}.$format",
+                )
                 task.publish(
                     ProgressEvent(status = TaskStatus.CONVERTING, percent = 0.0, message = "Converting to $format")
                 )
 
-                var lastPublishAt = 0L
-                val arguments = FfmpegArgs.build(
+                pipeline.convert(
                     input = input,
                     output = output,
                     format = format,
-                    audioBitrate = request.audioBitrate,
-                    videoCrf = request.videoCrf,
-                    start = request.start,
-                    end = request.end,
-                )
-                val exitCode = ffmpeg.run(binary, arguments, onProcess = { task.ffmpegProcess = it }) { line ->
-                    val position = FfmpegArgs.parseOutTime(line)
-                    if (position != null && duration != null && duration > 0) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastPublishAt >= 400) {
-                            lastPublishAt = now
-                            task.publish(
-                                ProgressEvent(
-                                    status = TaskStatus.CONVERTING,
-                                    percent = (position / duration * 100).coerceIn(0.0, 99.0),
-                                    message = "Converting to $format",
-                                )
+                    audioBitrateKbps = MediaPipeline.bitrateKbps(request.audioBitrate),
+                    startMs = request.start?.let { (it * 1000).toLong() },
+                    endMs = request.end?.let { (it * 1000).toLong() },
+                    onStage = { stage ->
+                        task.publish(
+                            ProgressEvent(status = TaskStatus.CONVERTING, percent = 0.0, message = stage)
+                        )
+                    },
+                    onProgress = { fraction ->
+                        task.publish(
+                            ProgressEvent(
+                                status = TaskStatus.CONVERTING,
+                                percent = (fraction * 99).coerceIn(0.0, 99.0),
+                                message = "Converting to $format",
                             )
-                        }
-                    }
-                }
+                        )
+                    },
+                    shouldCancel = { task.cancelRequested.get() },
+                )
 
                 if (task.cancelRequested.get()) {
                     output.delete()
                     task.markCanceled()
                     return@launch
-                }
-                if (exitCode != 0 || !output.isFile || output.length() == 0L) {
-                    output.delete()
-                    throw YtDlpException("ffmpeg failed with exit code $exitCode")
                 }
                 task.finish(
                     FileRef(

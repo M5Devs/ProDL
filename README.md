@@ -182,7 +182,7 @@ files and (b) tell the page where the API is.
 | --- | --- |
 | **Web** | Served by the backend, or any static host with `?api=https://your-server` |
 | **Desktop (Electron/Tauri)** | Ship `frontend/`, run the backend as a sidecar on `127.0.0.1:<free port>`, inject `window.__PRODL_API_BASE__` before the app scripts |
-| **Android** | `android/` builds self-contained per-ABI APKs (`arm64-v8a` ~69 MB, `armeabi-v7a` ~63 MB, plus x86/x86_64 for emulators): NewPipeExtractor for YouTube, bundled CPython + yt-dlp + ffmpeg for everything else (no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
+| **Android** | `android/` builds self-contained per-ABI APKs (`arm64-v8a` ~67 MB, `armeabi-v7a` ~60 MB, plus x86/x86_64 for emulators): NewPipeExtractor for YouTube, bundled CPython + yt-dlp for everything else (no PC), a native MediaCodec/MediaMuxer/Media3 + LAME media pipeline instead of a 36 MB ffmpeg binary, the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
 | **CLI / scripts** | Use the JSON API directly (see API_SPEC.md) |
 
 The Android target is a first-class build, not a wrapper around the Python
@@ -200,12 +200,27 @@ separate artifacts.
 
 ## The UI
 
-`frontend/` is a four-view single-page app — **Explore** (one bar that searches
-*or* takes any link), **Downloads** (live WebSocket/SSE progress with speed,
-ETA and per-task save/play/cancel), **Convert** (upload or reuse a finished
-download, trim, re-encode) and **Settings** (live engine cards straight from
-`/api/health`, API base URL, cookies, raw health JSON under *Advanced
+`frontend/` is a five-view single-page app — **Explore** (one bar that searches
+*or* takes any link), **Watch**, **Downloads** (live WebSocket/SSE progress with
+speed, ETA and per-task save/play/cancel), **Convert** (upload or reuse a
+finished download, trim, re-encode) and **Settings** (live engine cards straight
+from `/api/health`, API base URL, cookies, raw health JSON under *Advanced
 diagnostics*).
+
+Three YouTube-style behaviours keep the library honest and quick:
+
+- **Filter chips** — *All / Videos / Channels / Playlists*, sent as
+  `/api/search?type=…`. The on-device engine returns all four kinds; the
+  desktop engine only knows videos and says so in `note` instead of pretending
+  the list is empty.
+- **Watch view** — tapping a result opens the video with its channel, stats,
+  play and download buttons, and the extractor's `related` list underneath
+  (empty on the desktop engine, which does not fetch related items).
+- **Quality-first format picker** — `/api/info` returns up to twenty video-only
+  itags whose notes all read "video only · avc1"; the picker folds them into one
+  button per resolution (`144p` … `1080p60`, `1920x1080` from the Python backend
+  is normalised to the same label), keeps the best variant of each and says how
+  many it merged.
 
 It ships with **zero external requests**: no CDN, no Google Fonts, no icon
 fonts — the icons are inline SVG, the CSS is one local file, and every state in

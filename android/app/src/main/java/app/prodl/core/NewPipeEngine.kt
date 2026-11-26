@@ -10,8 +10,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request as HttpRequest
+import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
@@ -121,30 +124,79 @@ class NewPipeEngine(context: Context) {
         }.getOrDefault(false)
     }
 
-    suspend fun search(query: String, limit: Int): SearchResponse = withContext(Dispatchers.IO) {
-        requireReady()
-        val service = NewPipe.getService(ServiceList.YouTube.serviceId)
-        val extractor = service.getSearchExtractor(query)
-        extractor.fetchPage()
-        val items = mutableListOf<StreamInfoItem>()
-        var page = extractor.initialPage
-        while (items.size < limit) {
-            items += page.items.filterIsInstance<StreamInfoItem>()
-            val next = page.nextPage
-            if (next == null) break
-            page = extractor.getPage(next)
-        }
-        val results = items.take(limit).map { item ->
-            NewPipeMapper.searchItem(
-                url = item.url,
-                name = item.name,
-                thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
-                duration = item.duration.takeIf { it > 0 }?.toDouble(),
-                uploader = item.uploaderName,
-                viewCount = item.viewCount,
+    /**
+     * Search with a YouTube-style content filter.
+     *
+     * The filter is part of the query handler in NewPipeExtractor (it maps to
+     * YouTube's `sp=` search parameter), so it has to be applied before
+     * `fetchPage()`: filtering afterwards would only see the mixed page.
+     */
+    suspend fun search(query: String, limit: Int, type: String = "all"): SearchResponse =
+        withContext(Dispatchers.IO) {
+            requireReady()
+            val filter = contentFilter(type)
+            val service = NewPipe.getService(ServiceList.YouTube.serviceId)
+            val extractor = service.getSearchExtractor(query, listOf(filter), "")
+            extractor.fetchPage()
+            val items = mutableListOf<InfoItem>()
+            var page = extractor.initialPage
+            while (items.size < limit) {
+                items += page.items
+                val next = page.nextPage
+                if (next == null) break
+                page = extractor.getPage(next)
+            }
+            val results = items.take(limit).mapNotNull { item ->
+                when (item) {
+                    is StreamInfoItem -> NewPipeMapper.searchItem(
+                        url = item.url,
+                        name = item.name,
+                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+                        duration = item.duration.takeIf { it > 0 }?.toDouble(),
+                        uploader = item.uploaderName,
+                        viewCount = item.viewCount,
+                    )
+
+                    is ChannelInfoItem -> NewPipeMapper.searchItem(
+                        url = item.url,
+                        name = item.name,
+                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+                        duration = null,
+                        uploader = item.name,
+                        viewCount = null,
+                        kind = "channel",
+                        itemCount = item.subscriberCount.takeIf { it >= 0 },
+                    )
+
+                    is PlaylistInfoItem -> NewPipeMapper.searchItem(
+                        url = item.url,
+                        name = item.name,
+                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+                        duration = null,
+                        uploader = item.uploaderName,
+                        viewCount = null,
+                        kind = "playlist",
+                        itemCount = item.streamCount.takeIf { it >= 0 },
+                    )
+
+                    else -> null
+                }
+            }
+            SearchResponse(
+                query = query,
+                limit = limit,
+                count = results.size,
+                results = results,
+                type = filter,
             )
         }
-        SearchResponse(query = query, limit = limit, count = results.size, results = results)
+
+    /** `all|videos|channels|playlists` → a NewPipeExtractor content filter. */
+    private fun contentFilter(type: String?): String = when (type?.trim()?.lowercase(Locale.US)) {
+        "videos", "video" -> "videos"
+        "channels", "channel" -> "channels"
+        "playlists", "playlist" -> "playlists"
+        else -> "all"
     }
 
     suspend fun info(url: String): InfoResponse = withContext(Dispatchers.IO) {
@@ -185,6 +237,21 @@ class NewPipeEngine(context: Context) {
                 .mapNotNull(::audioOf),
             subtitles = runCatching { extractor.subtitlesDefault }.getOrNull().orEmpty()
                 .map(::subtitleOf).distinctBy { it.lang },
+            // YouTube already returns these with the watch page: no second request.
+            related = runCatching { extractor.relatedItems?.items }.getOrNull().orEmpty()
+                .filterIsInstance<StreamInfoItem>()
+                .filter { it.url.isNotBlank() }
+                .distinctBy { it.url }
+                .take(RELATED_LIMIT)
+                .map { item ->
+                    NewPipeMapper.relatedItem(
+                        url = item.url,
+                        name = item.name,
+                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+                        duration = item.duration.takeIf { it > 0 }?.toDouble(),
+                        uploader = item.uploaderName,
+                    )
+                },
         )
         if (media.muxed.isEmpty() && media.videoOnly.isEmpty() && media.audio.isEmpty()) {
             throw YtDlpException("NewPipeExtractor found no playable streams for this video")
@@ -316,5 +383,6 @@ class NewPipeEngine(context: Context) {
     companion object {
         private const val TAG = "ProDL.NewPipe"
         private const val CACHE_TTL_MS = 10 * 60 * 1000L
+        private const val RELATED_LIMIT = 12
     }
 }

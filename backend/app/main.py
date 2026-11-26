@@ -31,7 +31,7 @@ from .routers import tasks as tasks_routes
 from .schemas import ApiIndex
 from .tasks import TaskManager
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 
 DESCRIPTION = """
 Free, open-source video and audio downloader API.

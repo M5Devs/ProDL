@@ -12,8 +12,14 @@ plugins {
 // Single source of truth for the extractor version: the dependency and the
 // value `/api/health` reports both come from here.
 val newPipeExtractorVersion = "v0.27.1"
+val jump3rVersion = "1.0.5"
 
-val baseVersionCode = 20000
+// `-PprodlSlim=true` drops the bundled Python/yt-dlp payload too, leaving a
+// NewPipeExtractor-only APK (~8-12 MB) that still searches, plays and downloads
+// YouTube. The default build keeps yt-dlp for the 1000+ other sites.
+val prodlSlim = (findProperty("prodlSlim") as String?)?.toBoolean() ?: false
+
+val baseVersionCode = 20010
 val abiVersionCodes = linkedMapOf(
     "arm64-v8a" to 1,
     "armeabi-v7a" to 2,
@@ -52,8 +58,9 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = baseVersionCode
-        versionName = "2.0.0"
+        versionName = "2.1.0"
         buildConfigField("String", "NEWPIPE_VERSION", "\"${newPipeExtractorVersion.removePrefix("v")}\"")
+        buildConfigField("boolean", "SLIM", "$prodlSlim")
     }
 
     // One APK per CPU architecture: the bundled Python/yt-dlp/ffmpeg native
@@ -76,6 +83,12 @@ android {
 
     sourceSets.getByName("main") {
         assets.srcDir(frontendAssets)
+        // The slim build has no youtubedl-android on the classpath, so the real
+        // wrapper is swapped for a stub with the same surface.
+        // The yt-dlp wrapper is the only source that touches youtubedl-android,
+        // so it lives in a variant directory instead of src/main: the slim build
+        // has no such dependency and gets a stub with the same surface.
+        java.srcDir(if (prodlSlim) "src/slim/java" else "src/full/java")
     }
 
     buildTypes {
@@ -201,11 +214,18 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:$okhttpVersion")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
+    // Muxing, trimming and transcoding without any bundled binary:
+    // MediaMuxer copies tracks, Media3 Transformer uses the device's hardware
+    // codecs, and jump3r is a pure-Java LAME port for MP3 (MediaCodec has no
+    // MP3 encoder). Together they replace the 35 MB ffmpeg payload.
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("de.sciss:jump3r:$jump3rVersion")
+
     // Fallback engine for the 1000+ sites NewPipeExtractor does not cover:
-    // yt-dlp + ffmpeg, bundled and executed on-device. aria2c is deliberately
-    // left out: nothing passes `--external-downloader`, and it costs ~7 MB/ABI.
-    implementation("io.github.junkfood02.youtubedl-android:library:$youtubedlVersion")
-    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:$youtubedlVersion")
+    // yt-dlp on bundled CPython. No ffmpeg module: post-processing is native.
+    if (!prodlSlim) {
+        implementation("io.github.junkfood02.youtubedl-android:library:$youtubedlVersion")
+    }
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")

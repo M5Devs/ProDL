@@ -19,7 +19,7 @@ class ServerConfig(
     val maxCookieBytes: Long = 2L * 1024 * 1024,
     val sponsorBlockApi: String = "https://sponsor.ajay.app/api/skipSegments",
     val sponsorBlockCategories: List<String> = listOf("sponsor", "intro", "outro"),
-    val apiVersion: String = "1.0.0",
+    val apiVersion: String = "1.1.0",
     /** Matches the SPA's file:// default so the UI works even without injection. */
     val preferredPort: Int = 8000,
     val taskTtlSeconds: Long = 3600,

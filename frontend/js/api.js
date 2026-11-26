@@ -222,8 +222,16 @@
     return {
       config: window.ProDLConfig,
       health: function () { return request('/api/health'); },
-      search: function (query, limit, signal) {
-        return request('/api/search', { params: { q: query, limit: limit }, signal: signal });
+      /** `type`: all | videos | channels | playlists (documented in API_SPEC). */
+      search: function (query, limit, type, signal) {
+        return request('/api/search', {
+          params: {
+            q: query,
+            limit: limit,
+            type: type && type !== 'all' ? type : undefined
+          },
+          signal: signal
+        });
       },
       info: function (url, options) {
         var opts = options || {};

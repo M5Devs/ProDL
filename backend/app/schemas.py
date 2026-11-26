@@ -63,6 +63,10 @@ class SearchResponse(BaseModel):
     limit: int
     count: int
     results: list[SearchResult]
+    # Echoes the requested filter so the UI can label the result list.
+    type: str = "all"
+    # Set when the filter was accepted but this engine could not honour it.
+    note: str | None = None
 
 
 class SponsorSegment(BaseModel):

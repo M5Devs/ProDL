@@ -74,7 +74,8 @@ fun Route.apiRoutes(server: LocalServer) {
             if (query.isEmpty()) throw ApiBadRequest("q is required")
             if (query.length > 200) throw ApiBadRequest("q must be 200 characters or fewer")
             val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: config.searchLimit
-            call.respond(media.search(query, limit))
+            val type = call.request.queryParameters["type"] ?: "all"
+            call.respond(media.search(query, limit, type))
         }
 
         get("/info") {

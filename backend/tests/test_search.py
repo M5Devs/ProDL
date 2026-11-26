@@ -35,6 +35,8 @@ def test_search_returns_normalised_results(client, monkeypatch):
         "query": "lofi",
         "limit": 5,
         "count": 2,
+        "type": "all",
+        "note": None,
         "results": [
             {
                 "id": "id1",
@@ -46,6 +48,8 @@ def test_search_returns_normalised_results(client, monkeypatch):
                 "view_count": 1000,
                 "is_live": False,
                 "extractor": None,
+                "kind": "video",
+                "item_count": None,
             },
             {
                 "id": "id2",
@@ -57,6 +61,8 @@ def test_search_returns_normalised_results(client, monkeypatch):
                 "view_count": 2000,
                 "is_live": False,
                 "extractor": None,
+                "kind": "video",
+                "item_count": None,
             },
         ],
     }
@@ -123,3 +129,36 @@ def test_search_target_building(monkeypatch, query, expected):
     monkeypatch.setattr(search_module.yt_dlp, "YoutubeDL", FakeYDL)
     assert search_module.search_videos_sync(query, 5) == []
     assert captured["target"] == expected
+
+
+def test_search_channels_filter_is_reported_not_attempted(client, monkeypatch):
+    """The desktop engine cannot search channels; it must say so, not lie."""
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("extractor must not run for an unsupported filter")
+
+    monkeypatch.setattr(media_service, "search", fail_if_called)
+
+    response = client.get("/api/search", params={"q": "lofi", "type": "channels"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "channels"
+    assert body["results"] == []
+    assert "on-device" in body["note"]
+
+
+def test_search_videos_filter_is_forwarded(client, monkeypatch):
+    seen = {}
+
+    async def fake_search(settings, query, limit=None):
+        seen["query"] = query
+        return [_result(1)]
+
+    monkeypatch.setattr(media_service, "search", fake_search)
+
+    response = client.get("/api/search", params={"q": "lofi", "type": "video"})
+    body = response.json()
+    assert response.status_code == 200
+    assert body["type"] == "videos"
+    assert body["note"] is None
+    assert seen == {"query": "lofi"}

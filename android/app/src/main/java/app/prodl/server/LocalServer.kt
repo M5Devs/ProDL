@@ -10,7 +10,7 @@ import app.prodl.core.ComponentStatus
 import app.prodl.core.CookieStore
 import app.prodl.core.CookieFormatException
 import app.prodl.core.ErrorResponse
-import app.prodl.core.FfmpegRunner
+import app.prodl.core.MediaPipeline
 import app.prodl.core.NewPipeEngine
 import app.prodl.core.HealthResponse
 import app.prodl.core.ServerConfig
@@ -56,10 +56,10 @@ class LocalServer(
     val cookies = CookieStore(config.cookiesFile)
     private val yt = YtDlp(context)
     val newpipe = NewPipeEngine(context)
-    private val ffmpeg = FfmpegRunner(context)
+    private val pipeline = MediaPipeline(context)
     private val sponsor = SponsorBlockClient(config.sponsorBlockApi, config.sponsorBlockCategories)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val media = MediaService(config, tasks, yt, newpipe, ffmpeg, cookies, sponsor, scope)
+    val media = MediaService(config, tasks, yt, newpipe, pipeline, cookies, sponsor, scope)
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private val startedAt = System.currentTimeMillis()
@@ -109,11 +109,8 @@ class LocalServer(
     }
 
     fun health(): HealthResponse {
-        val ffmpegBinary = ffmpeg.binary()
-        val ffprobeBinary = ffmpeg.probeBinary()
         val version = yt.version()
         val initError = yt.initializationError
-        val ffmpegError = yt.ffmpegInitializationError
         val ytReady = yt.isReady
         val npReady = newpipe.isReady
         val writable = config.downloadDir.isDirectory && config.downloadDir.canWrite()
@@ -121,8 +118,8 @@ class LocalServer(
         // covers YouTube, yt-dlp covers everything else.
         val canExtract = npReady || ytReady
         return HealthResponse(
-            // "ok" = an extraction engine plus ffmpeg and a writable directory.
-            status = if (canExtract && ffmpegBinary != null && writable) "ok" else "degraded",
+            // "ok" = an extraction engine, a media pipeline and a writable dir.
+            status = if (canExtract && pipeline.available && writable) "ok" else "degraded",
             apiVersion = config.apiVersion,
             version = BuildConfig.VERSION_NAME,
             uptimeSeconds = uptimeSeconds(),
@@ -159,22 +156,14 @@ class LocalServer(
                     else -> "initialising"
                 },
             ),
-            ffmpeg = ComponentStatus(
-                available = ffmpegBinary != null,
-                version = ffmpeg.version(),
-                path = ffmpegBinary?.name,
-                note = when {
-                    ffmpegError != null -> ffmpegError
-                    ffmpegBinary != null -> "bundled"
-                    else -> "initialising: ${yt.step}"
-                },
-                state = when {
-                    ffmpegBinary != null -> "ready"
-                    ffmpegError != null -> "failed"
-                    else -> "initialising"
-                },
+            // No bundled binary any more: the platform codecs do the work, so
+            // this cannot fail with CANNOT LINK EXECUTABLE or hang on unpacking.
+            transcoder = ComponentStatus(
+                available = pipeline.available,
+                version = pipeline.version,
+                note = pipeline.description,
+                state = "ready",
             ),
-            ffprobe = ComponentStatus(available = ffprobeBinary != null, path = ffprobeBinary?.name),
             jsRuntime = ComponentStatus(
                 available = true,
                 version = "quickjs (bundled)",
@@ -190,7 +179,10 @@ class LocalServer(
                 "sponsorblock" to true,
                 "subtitles" to true,
                 "playlist" to true,
-                "convert" to (ffmpegBinary != null),
+                "convert" to pipeline.available,
+                "mp3" to pipeline.available,
+                "mux" to pipeline.available,
+                "trim" to pipeline.available,
                 "websocket" to true,
                 "sse" to true,
                 "native_playback" to true,
@@ -312,7 +304,7 @@ class LocalServer(
 
         private val ENDPOINTS = linkedMapOf(
             "GET /api" to "API index",
-            "GET /api/health" to "Server status and yt-dlp/ffmpeg availability",
+            "GET /api/health" to "Server status, engines and media-pipeline availability",
             "GET /api/search?q=&limit=" to "YouTube search without an API key",
             "GET /api/info?url=&sponsorblock=" to "Metadata, formats, subtitles, SponsorBlock",
             "POST /api/download" to "Start a download task",

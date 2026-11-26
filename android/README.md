@@ -32,7 +32,7 @@ no Google Play Services / Firebase / ad SDK anywhere in the dependency graph.
 
 | Path | Purpose |
 | --- | --- |
-| `app/src/main/java/app/prodl/core/` | Platform-light domain code: API models, yt-dlp JSON mapping, progress parsing, Netscape cookies, format selection, ffmpeg arguments, cookie store, SponsorBlock client, MediaStore export |
+| `app/src/main/java/app/prodl/core/` | Platform-light domain code: API models, yt-dlp JSON mapping, progress parsing, Netscape cookies, format selection, the native media pipeline (`MediaPipeline`, `Media3Converter`, `NativeMuxer`, `AudioDecoder`, `Mp3Writer`, `WavWriter`, `MediaTargets`), cookie store, SponsorBlock client, MediaStore export |
 | `app/src/main/java/app/prodl/server/` | Ktor server, routes, task manager, download/convert orchestration |
 | `app/src/main/java/app/prodl/bridge/` | `@JavascriptInterface` bridge exposed as `window.ProDLNative` |
 | `app/src/main/java/app/prodl/playback/` | Media3 session service, PiP player activity, SponsorBlock skipper |
@@ -43,9 +43,32 @@ no Google Play Services / Firebase / ad SDK anywhere in the dependency graph.
 into the APK at build time. Nothing is duplicated into version control, so the
 HTML/CSS/JS can never drift between web, desktop and Android.
 
-### Why the binaries are packaged "the old way"
+### Why there is no bundled ffmpeg
 
-youtubedl-android ships its payload as `libpython.zip.so` / `libffmpeg.zip.so`
+Earlier builds shipped `youtubedl-android:ffmpeg` (35.6 MB per architecture).
+On current Android releases its unpacked binary fails to start with
+`CANNOT LINK EXECUTABLE` (missing `libav*.so` dependencies on modern NDK
+layouts), and yt-dlp then hangs on "unpacking ffmpeg" — so every mux, audio
+extraction and conversion path was dead, and startup took ~30 s longer.
+
+It was replaced by a native pipeline that uses the codecs already on the phone:
+
+| Job | Implementation |
+| --- | --- |
+| Join video + audio (same container/codecs) | `MediaMuxer` stream copy (`NativeMuxer`) — no re-encode, ~1 s |
+| Join when codecs disagree (e.g. Opus in MP4) | Media3 `Transformer` (`Media3Converter`), hardware codecs |
+| Trim / re-container / extract audio | Media3 `Transformer` with clipping + `setAudioMimeType` |
+| MP3 encode | bundled [jump3r](https://github.com/Sciss/jump3r) (pure-Java LAME 3.100) + `Mp3Writer` |
+| WAV output | `WavWriter` (PCM header + raw samples) |
+| Any other PCM work | `MediaCodec` decode (`AudioDecoder`) |
+
+`/api/health` now reports a `transcoder` component instead of `ffmpeg`
+(`available`, `version`, `note`), and `features.convert` is derived from it.
+Nothing is unpacked at first launch, so a conversion can start immediately.
+
+### Why the Python payload is still packaged "the old way"
+
+youtubedl-android ships its payload as `libpython.zip.so`
 and unpacks them on first launch. That only works when the `.so` files are
 extracted to `nativeLibraryDir` at install time, so the build sets both:
 
@@ -56,18 +79,18 @@ android:extractNativeLibs="true"                      // in <application>
 
 With the modern (aligned, uncompressed) default the library cannot find a
 runnable interpreter, `YoutubeDL.init()` throws, and `/api/health` reports
-`yt-dlp failed` / `no ffmpeg` with `features.convert: false` — search and
-download are dead even though the APK looks fine.
+`yt-dlp failed` with `features.search: false` — search and download are dead
+even though the APK looks fine. (The NewPipe engine and the native transcoder
+keep working regardless, which is why they are the primary path.)
 
-`YtDlp.initAsync()` initialises FFmpeg and yt-dlp in separate `try` blocks with
+`YtDlp.initAsync()` initialises yt-dlp in a `try` block with
 `applicationContext`, is idempotent across Activity re-creation, and stores the
 exact exception message for the health payload:
 
 - `yt_dlp.note` → `initialisation failed: <exception>` (search/download broken)
-- `ffmpeg.note` → `initialisation failed: <exception>` (conversion disabled)
-- `status` is `ok` only when both engines and the download dir are ready,
-  otherwise `degraded` (per `API_SPEC.md`)
-- `FfmpegRunner` caches only successful lookups, so a binary that appears after
+- `status` is `ok` when an extraction engine, the media pipeline and the
+  download directory are all ready, otherwise `degraded` (per `API_SPEC.md`)
+- `YtDlp` caches only successful lookups, so a Python payload that appears after
   the first launch is picked up by the next health check.
 
 ## Two extraction engines
@@ -103,10 +126,13 @@ NewPipe streams are downloaded straight from `googlevideo.com` with OkHttp:
 
 - progressive (`np:muxed:`) streams are saved as-is (MP4/WebM);
 - video-only (`np:video:`) streams get the best matching audio track, joined by
-  `ffmpeg -c copy` into MP4, WebM or MKV (chosen from the codec pair, never a
-  re-encode);
+  `MediaMuxer` (stream copy). Only when the pair is illegal for the container
+  (Opus in MP4, VP8 in MP4) does Media3 re-encode the offending track — the
+  plan comes from `MediaTargets.muxPlan(videoMime, audioMime)`, which is unit
+  tested for every codec pair the extractor can hand us;
 - audio-only downloads keep the original track when the container matches, else
-  FFmpeg extracts to MP3/M4A/Opus/FLAC/WAV.
+  the pipeline writes the requested format: **MP3** (jump3r/LAME), M4A (AAC via
+  Media3) or WAV. `opus`/`flac` requests fall back to MP3 instead of failing.
 
 Progress maps both tracks into one percentage (video 0–70 %, audio 70–100 %)
 and then reports the mux, using the existing WebSocket/SSE pipeline.
@@ -118,13 +144,13 @@ no platform branch:
 
 | `API_SPEC.md` | Android implementation |
 | --- | --- |
-| `GET /api`, `/api/health`, `/api/openapi.json` | `ApiRoutes` + `LocalServer.health()` (reports bundled yt-dlp/ffmpeg/QuickJS, cookie state, feature flags) |
-| `GET /api/search` | `yt-dlp "ytsearchN:q" --flat-playlist`, no API key |
-| `GET /api/info` | `yt-dlp -J` → formats, subtitles, `best_video_url`/`best_audio_url` (ad-free direct stream), optional SponsorBlock segments |
+| `GET /api`, `/api/health`, `/api/openapi.json` | `ApiRoutes` + `LocalServer.health()` (reports yt-dlp, `transcoder`, QuickJS, cookie state, feature flags) |
+| `GET /api/search` | NewPipeExtractor (with `type=all\|videos\|channels\|playlists`), else `yt-dlp "ytsearchN:q" --flat-playlist`; no API key |
+| `GET /api/info` | NewPipeExtractor or `yt-dlp -J` → formats, subtitles, `best_video_url`/`best_audio_url` (ad-free direct stream), `related` videos, optional SponsorBlock segments |
 | `POST /api/download` | `MediaService.startDownload` → `202` + `task_id` |
 | `WS /api/ws/progress/{task_id}`, SSE `GET /api/progress/{task_id}` | Same `ProgressEvent` schema; both close on the terminal event, `{"type":"ping"}` keep-alives |
 | `GET/POST/DELETE /api/cookies`, `POST /api/cookies/upload` | `CookieStore` in app-private storage (never backed up) |
-| `POST /api/convert`, `POST /api/convert/upload` | `FfmpegRunner` (bundled ffmpeg) with trim + `out_time` progress |
+| `POST /api/convert`, `POST /api/convert/upload` | `MediaPipeline` (Media3 `Transformer` + LAME) with trim + progress events |
 | `GET/DELETE /api/files/{task_id}` | Streams the finished file from the app's download directory |
 
 Path-relative `download_url`/`websocket_url`/`sse_url` values and `{"detail": …}`
@@ -180,8 +206,17 @@ Each APK carries exactly one `lib/<abi>/` tree and gets its own version code,
 x86_64, `200004` x86) so stores and `adb` treat them as distinct builds. Bump
 `baseVersionCode` in `app/build.gradle.kts` once per release.
 
-The APKs are still ~60–70 MB because they are self-contained: bundled CPython
-(~14 MB), ffmpeg (~36 MB) and yt-dlp per architecture. `-PprodlUniversal` builds
+Measured on 2.1.0, per architecture (minified release):
+
+| Build | Size | Engine |
+| --- | --- | --- |
+| default (debug) | ~47 MB | NewPipeExtractor + CPython/yt-dlp + native pipeline |
+| default (`PRODL_MINIFY=1`) | **22 MB** | same, shrunk |
+| `-PprodlSlim=true` (`PRODL_MINIFY=1`) | **4.0 MB** | NewPipeExtractor + native pipeline, no Python, no ffmpeg |
+
+Removing the 35.6 MB ffmpeg payload cut the debug APK from 67 MB to 33 MB
+(slim) / 47 MB (full); R8 takes the release builds to 4.0 MB / 22 MB.
+`-PprodlUniversal` builds
 the single fat APK as well; minification is opt-in:
 `PRODL_MINIFY=1 ./gradlew :app:assembleRelease`.
 
@@ -197,7 +232,10 @@ and are shared with the Python implementation's behaviour:
 - yt-dlp progress lines (percent, sizes, speed, ETA, destinations, merge/extract)
 - yt-dlp `-J` → `API_SPEC.md` models (formats, audio/video flags, subtitles, direct URLs, search entries)
 - format selector output for audio-only, explicit format ids, height caps, cookies, SponsorBlock, subtitles
-- ffmpeg argument construction, trimming, `out_time` progress
+- `MediaTargets` mux decisions for every codec pair (AVC/AAC, VP9/Opus, VP8/AAC, …), resolution labels (`1080p60`, `144p48`), size estimates
+- a real MP3 encode: jump3r LAME is pure Java, so the test encodes a sine wave,
+  parses the MPEG frame header back (128 kbps, 44.1 kHz, stereo) and checks the
+  byte count; WAV headers are verified byte by byte
 - Netscape cookie parsing/serialisation, dedupe, cookie-header conversion
 - SponsorBlock skip decisions
 
@@ -215,7 +253,8 @@ ProDL is AGPLv3. The Android shell adds:
 
 | Dependency | License | Notes |
 | --- | --- | --- |
-| `youtubedl-android` (junkfood02 fork) | GPLv3 | bundles yt-dlp (Unlicense), CPython, ffmpeg, aria2c |
+| `youtubedl-android` (junkfood02 fork) | GPLv3 | bundles yt-dlp (Unlicense) and CPython; the ffmpeg artifact is no longer used |
+| `de.sciss:jump3r` | LGPL-2.1+ | pure-Java LAME 3.100 MP3 encoder, statically linked into the APK (see [NOTICE.md](NOTICE.md)) |
 | AndroidX core/activity/lifecycle, Media3 | Apache-2.0 | no Play Services needed |
 | Ktor (CIO, WebSockets, CORS, ContentNegotiation) | Apache-2.0 | |
 | kotlinx-serialization / coroutines | Apache-2.0 | |

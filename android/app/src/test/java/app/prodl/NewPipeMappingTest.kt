@@ -1,6 +1,6 @@
 package app.prodl
 
-import app.prodl.core.FfmpegArgs
+import app.prodl.core.MediaTargets
 import app.prodl.core.NpFormatId
 import app.prodl.core.NpMedia
 import app.prodl.core.NpStream
@@ -84,7 +84,7 @@ class NewPipeMappingTest {
 
         val onlyAudio = formats.first { it.formatId == "np:audio:140" }
         assertTrue(onlyAudio.hasAudio && !onlyAudio.hasVideo)
-        assertEquals("audio only", onlyAudio.resolution)
+        assertEquals("audio", onlyAudio.resolution)
     }
 
     @Test
@@ -115,11 +115,15 @@ class NewPipeMappingTest {
         // MP4 video + best AAC audio → a plain MP4 mux, no re-encode.
         assertEquals(140, selection.audio?.itag)
         assertTrue(selection.needsMux)
-        assertEquals("mp4", FfmpegArgs.muxExtension("mp4", selection.audio!!.ext))
+        // mp4 + m4a is a MediaMuxer copy; no re-encode, no MKV.
+        assertEquals(
+            MediaTargets.MuxPlan.COPY_MP4,
+            MediaTargets.muxPlan("video/avc", "audio/mp4a-latm"),
+        )
     }
 
     @Test
-    fun `opus audio falls back to mkv so the copy stays legal`() {
+    fun `opus audio with mp4 video needs an audio-only transcode`() {
         val webmVideo = video(248, 1080, ext = "webm")
         val selection = NewPipeMapper.select(
             media.copy(videoOnly = listOf(webmVideo)),
@@ -127,8 +131,16 @@ class NewPipeMappingTest {
             audioOnly = false,
         )!!
         assertEquals(251, selection.audio?.itag)
-        assertEquals("webm", FfmpegArgs.muxExtension("webm", selection.audio!!.ext))
-        assertEquals("mkv", FfmpegArgs.muxExtension("mp4", selection.audio!!.ext))
+        // WebM video keeps its Opus track: MediaMuxer copies both into WebM.
+        assertEquals(
+            MediaTargets.MuxPlan.COPY_WEBM,
+            MediaTargets.muxPlan("video/x-vnd.on2.vp9", "audio/opus"),
+        )
+        // Opus inside MP4 is illegal, so only the audio gets re-encoded.
+        assertEquals(
+            MediaTargets.MuxPlan.AUDIO_TO_AAC_THEN_MP4,
+            MediaTargets.muxPlan("video/avc", "audio/opus"),
+        )
     }
 
     @Test

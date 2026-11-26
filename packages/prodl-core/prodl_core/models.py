@@ -62,6 +62,8 @@ class VideoInfo(BaseModel):
     # Direct CDN links enable ad-free in-app playback in a WebView shell.
     best_video_url: str | None = None
     best_audio_url: str | None = None
+    # Related videos, when the extractor returns them with the watch page.
+    related: list["SearchResult"] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):
@@ -74,6 +76,10 @@ class SearchResult(BaseModel):
     view_count: int | None = None
     is_live: bool = False
     extractor: str | None = None
+    # "video", "channel" or "playlist": the UI renders each differently.
+    kind: str = "video"
+    # Subscriber count for channels, video count for playlists.
+    item_count: int | None = None
 
 
 class DownloadOptions(BaseModel):

@@ -1,6 +1,6 @@
 # ProDL API Specification
 
-Version `1.0.0` · Backend `2.0.0` · Last updated 2026-11-26
+Version `1.1.0` · Backend `2.1.0` · Last updated 2026-11-26
 
 ProDL exposes a single JSON API over HTTP plus one WebSocket (with an SSE
 fallback) for live progress. Everything the web UI does goes through this API —
@@ -122,8 +122,8 @@ and client pre-flight checks.
 ```json
 {
   "status": "ok",
-  "api_version": "1.0.0",
-  "version": "2.0.0",
+  "api_version": "1.1.0",
+  "version": "2.1.0",
   "uptime_seconds": 42.51,
   "platform": "Linux 6.8.0-1055-gke",
   "python": "3.13.15",
@@ -163,8 +163,9 @@ and reports both, so an engine that is still unpacking never blocks the other:
 | --- | --- | --- |
 | `yt_dlp` | all backends | yt-dlp (+ the bundled CPython on Android). Covers 1000+ sites, is the fallback for YouTube. |
 | `newpipe` | Android only | NewPipeExtractor (GPL-3.0), the primary YouTube engine: search, metadata, direct stream URLs. Pure Java, so it is ready in milliseconds. |
-| `ffmpeg` | all backends | Muxing, conversion, audio extraction. |
-| `ffprobe` / `js_runtime` | all backends | Media probing / JavaScript runtime for YouTube challenges. |
+| `ffmpeg` | Python backend only | Muxing, conversion, audio extraction. |
+| `transcoder` | Android only | The native media pipeline: MediaMuxer for stream copies, Media3 `Transformer` for re-encodes, MediaCodec for PCM decode, and a bundled pure-Java LAME encoder for MP3. Replaces the 35 MB bundled `ffmpeg` binary, which failed to link on modern Android. |
+| `ffprobe` / `js_runtime` | Python backend only | Media probing / JavaScript runtime for YouTube challenges. |
 
 Each component carries an optional `state` field: `initialising`, `ready` or
 `failed`. Clients must render `initialising` as in-progress, never as an error —
@@ -191,11 +192,31 @@ the mobile app unpacks its bundled payload on first launch:
 **either** engine is ready. `features.newpipe` and `features.yt_dlp` report the
 individual engines.
 
+Clients must read either `transcoder` (Android) or `ffmpeg` (desktop): both are
+the same capability slot, and exactly one is present. A client that needs to
+convert media checks `transcoder.available || ffmpeg.available`, and reports
+`features.convert` — the server already combines them:
+
+```json
+"transcoder": {
+  "available": true,
+  "version": "MediaMuxer + Media3 1.11.1 + LAME 3.100",
+  "path": null,
+  "note": "hardware codecs; no bundled ffmpeg binary",
+  "state": "ready"
+}
+```
+
+Android also reports `features.mp3`, `features.mux` and `features.trim`, which
+`convert` implies.
+
 ### Engine routing
 
 | Request | Engine |
 | --- | --- |
 | `GET /api/search` for any query | NewPipeExtractor when ready and it returns results, else yt-dlp |
+| `GET /api/search?type=channels\|playlists` | NewPipeExtractor only; yt-dlp reports `note` instead |
+| `POST /api/download` `np:` format ids | NewPipeExtractor (stream copy) + the native pipeline, no Python |
 | `GET /api/info` for a YouTube URL | NewPipeExtractor when ready, else yt-dlp |
 | `GET /api/info` for any other URL | yt-dlp |
 | `POST /api/download` with `format_id` `np:…` or omitted (YouTube URL) | NewPipeExtractor |
@@ -218,6 +239,7 @@ pasting a URL returns that single item.
 | --- | --- | --- | --- | --- |
 | `q` | string | yes | — | Search terms, or a media URL. Blank strings are rejected |
 | `limit` | int | no | `10` | `1…PRODL_SEARCH_LIMIT_MAX` (default max `50`) |
+| `type` | string | no | `all` | Content filter: `all`, `videos`, `channels`, `playlists`. `video`/`channel`/`playlist` are accepted aliases |
 
 **Response `200`**
 
@@ -226,6 +248,8 @@ pasting a URL returns that single item.
   "query": "lofi hip hop",
   "limit": 3,
   "count": 2,
+  "type": "all",
+  "note": null,
   "results": [
     {
       "id": "jfKfPfyJRdk",
@@ -236,14 +260,50 @@ pasting a URL returns that single item.
       "uploader": "Lofi Girl",
       "view_count": 123456789,
       "is_live": true,
-      "extractor": "youtube"
+      "extractor": "youtube",
+      "kind": "video",
+      "item_count": null
+    },
+    {
+      "id": "UCX6OQ3DkcsbYNE6H8uQQuVA",
+      "title": "Lofi Girl",
+      "url": "https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA",
+      "thumbnail": "https://yt3.ggpht.com/…",
+      "duration": null,
+      "uploader": "Lofi Girl",
+      "view_count": null,
+      "is_live": false,
+      "extractor": "youtube",
+      "kind": "channel",
+      "item_count": 14800000
     }
   ]
 }
 ```
 
-`count` equals `len(results)` and may be lower than `limit`. Upstream failures
-return `502` with the extractor message.
+`count` equals `len(results)` and may be lower than `limit`. `type` echoes the
+filter that was applied; `note` is set when the filter was accepted but could
+not be honoured (see below).
+
+**Result kinds**
+
+| `kind` | Meaning | `item_count` |
+| --- | --- | --- |
+| `video` | A playable video. `duration` is seconds; `0` on live streams | — |
+| `channel` | An uploader channel. Only returned by the on-device engine | Subscriber count |
+| `playlist` | A playlist. Only returned by the on-device engine | Number of videos |
+
+**Filter support**
+
+| Engine | `all` | `videos` | `channels` | `playlists` |
+| --- | --- | --- | --- | --- |
+| NewPipeExtractor (Android) | yes | yes | yes | yes |
+| yt-dlp `ytsearch` (desktop) | yes | yes | no | no |
+
+An unsupported filter is not an error: the server answers `200` with
+`results: []` and a `note` explaining that the on-device engine is needed.
+
+Upstream failures return `502` with the extractor message.
 
 ```bash
 curl "http://127.0.0.1:8000/api/search?q=lofi&limit=5"
@@ -253,8 +313,8 @@ curl "http://127.0.0.1:8000/api/search?q=lofi&limit=5"
 
 ## 6. `GET /api/info`
 
-Full metadata, formats, subtitles, direct stream URLs and optional SponsorBlock
-segments for one media URL.
+Full metadata, formats, subtitles, direct stream URLs, related videos and
+optional SponsorBlock segments for one media URL.
 
 **Query parameters**
 
@@ -322,6 +382,21 @@ segments for one media URL.
   ],
   "best_video_url": "https://rr1---sn-...googlevideo.com/videoplayback?...",
   "best_audio_url": "https://rr1---sn-...googlevideo.com/videoplayback?...",
+  "related": [
+    {
+      "id": "9bZkp7q19f0",
+      "title": "PSY - GANGNAM STYLE(강남스타일) M/V",
+      "url": "https://www.youtube.com/watch?v=9bZkp7q19f0",
+      "thumbnail": "https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg",
+      "duration": 253,
+      "uploader": "officialpsy",
+      "view_count": 5200000000,
+      "is_live": false,
+      "extractor": "youtube",
+      "kind": "video",
+      "item_count": null
+    }
+  ],
   "sponsorblock": {
     "requested": true,
     "video_id": "jNQXAC9IVRw",
@@ -344,6 +419,9 @@ Notes
   with `format_id: "best"`.
 - SponsorBlock failures never fail the request: `sponsorblock.error` carries the
   reason and `segments` is empty.
+- `related` powers the Watch view. It is filled from the watch page itself (no
+  extra request) by the on-device NewPipeExtractor engine, capped at 12 items;
+  the yt-dlp engine returns `[]` because it does not fetch related items.
 - `cookies_used` is `true` when a stored cookie file was attached to the request.
 
 ```bash
@@ -646,8 +724,8 @@ Self-describing entry point, useful for clients that only know the host.
 ```json
 {
   "name": "ProDL",
-  "version": "2.0.0",
-  "api_version": "1.0.0",
+  "version": "2.1.0",
+  "api_version": "1.1.0",
   "docs": "/docs",
   "openapi": "/openapi.json",
   "endpoints": {
