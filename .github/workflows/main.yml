@@ -91,10 +91,18 @@ jobs:
       - name: Verify split APKs (per ABI assets, libs, versionCode)
         run: |
           python3 - <<'PY'
-          import json, os, sys, zipfile
+          import json, os, re, sys, zipfile
 
-          # abi -> expected versionCode (baseVersionCode * 10 + abiCode)
-          expected = {"arm64-v8a": 200001, "armeabi-v7a": 200002, "x86_64": 200003, "x86": 200004}
+          # Derive the expected versionCodes from the build script instead of
+          # hardcoding them: every release bumps `baseVersionCode`, and a stale
+          # literal here fails the build for no reason. abi -> base * 10 + abiCode
+          gradle = open("app/build.gradle.kts").read()
+          base = int(re.search(r"^val baseVersionCode = (\d+)", gradle, re.M).group(1))
+          block = re.search(r"val abiVersionCodes = linkedMapOf\((.*?)\)", gradle, re.S).group(1)
+          abi_codes = {abi: int(code) for abi, code in re.findall(r'"([\w-]+)" to (\d+)', block)}
+          expected = {abi: base * 10 + code for abi, code in abi_codes.items()}
+          if len(expected) != 4:
+              sys.exit(f"could not read abiVersionCodes from build.gradle.kts: {expected}")
           required = [
               "assets/frontend/index.html",
               "assets/frontend/js/api.js",
