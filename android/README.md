@@ -209,13 +209,15 @@ cd android
 
 | APK | Size (debug) | Install if… |
 | --- | --- | --- |
-| `app-arm64-v8a-debug.apk` | ~64 MB | **Almost all modern phones** (64-bit ARM, Android 8+) |
-| `app-armeabi-v7a-debug.apk` | ~61 MB | Older/cheap 32-bit phones |
-| `app-x86_64-debug.apk` | ~64 MB | Standard emulator (`x86_64` system image) |
-| `app-x86-debug.apk` | ~64 MB | Legacy 32-bit emulators, Chromebooks with 32-bit images |
+| `app-arm64-v8a-debug.apk` | ~50 MB | **Almost all modern phones** (64-bit ARM, Android 8+) |
+| `app-armeabi-v7a-debug.apk` | ~49 MB | Older/cheap 32-bit phones |
+| `app-x86_64-debug.apk` | ~50 MB | Standard emulator (`x86_64` system image) |
+| `app-x86-debug.apk` | ~50 MB | Legacy 32-bit emulators, Chromebooks with 32-bit images |
 
-Debug builds are unminified: Compose alone adds ~90 MB of dex, so these numbers
-say nothing about release size (see the table below).
+These are clean-build numbers. Debug builds are unminified and Gradle keeps
+per-build dex files, so an incremental `assembleDebug` can report 60 MB+ for the
+same code — measure after `clean`, and use the release numbers below to judge
+what users actually download.
 
 Install the one that matches your device:
 `adb install app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`. Picking the
@@ -231,8 +233,8 @@ Measured on 2.1.0, arm64-v8a:
 
 | Build | Size | Engine |
 | --- | --- | --- |
-| default (debug) | ~64 MB | NewPipeExtractor + CPython/yt-dlp + native pipeline |
-| `-PprodlSlim=true` (debug) | ~48 MB | NewPipeExtractor + native pipeline, no Python |
+| default (debug) | ~50 MB | NewPipeExtractor + CPython/yt-dlp + native pipeline |
+| `-PprodlSlim=true` (debug) | ~29 MB | NewPipeExtractor + native pipeline, no Python |
 | default (`PRODL_MINIFY=1`, release) | **22.8 MB** | same as default, R8-shrunk |
 | `-PprodlSlim=true` (`PRODL_MINIFY=1`) | **5.2 MB** | no Python, R8-shrunk |
 
