@@ -2,7 +2,6 @@
 <resources>
     <!-- Same palette as frontend/css/styles.css so the shell and the SPA match. -->
     <color name="prodl_background">#FF0D0F14</color>
-    <color name="prodl_text">#FFE7E9EE</color>
     <color name="prodl_accent">#FFA78BFA</color>
     <color name="ic_launcher_background">#FF0D0F14</color>
 </resources>

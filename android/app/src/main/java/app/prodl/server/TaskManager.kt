@@ -7,7 +7,10 @@ import app.prodl.core.TaskStatus
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -20,7 +23,7 @@ fun nowSeconds(): Double = System.currentTimeMillis() / 1000.0
  * One unit of background work. Progress is broadcast through a SharedFlow with
  * replay=1, which gives every new subscriber the current snapshot for free.
  */
-class Task(val id: String, val kind: String) {
+class Task(val id: String, val kind: String, private val onChange: () -> Unit = {}) {
     val createdAt: Double = nowSeconds()
 
     @Volatile
@@ -81,6 +84,7 @@ class Task(val id: String, val kind: String) {
         updatedAt = nowSeconds()
         lastEvent = stamped
         emitter.tryEmit(stamped)
+        onChange()
     }
 
     fun finish(reference: FileRef, path: File) {
@@ -125,16 +129,37 @@ class TaskManager(
 ) {
     private val tasks = ConcurrentHashMap<String, Task>()
 
+    /**
+     * Bumped on every create/publish/finish, so the native UI can derive its
+     * task list from a StateFlow instead of polling or opening a WebSocket.
+     */
+    private val _revision = MutableStateFlow(0L)
+    val revision: StateFlow<Long> = _revision.asStateFlow()
+
     fun create(kind: String): Task {
         prune()
-        val task = Task(UUID.randomUUID().toString().replace("-", ""), kind)
+        val task = Task(UUID.randomUUID().toString().replace("-", ""), kind) { bump() }
         tasks[task.id] = task
+        bump()
         return task
     }
 
     fun get(id: String): Task? = tasks[id]
 
     fun all(): List<Task> = tasks.values.sortedByDescending { it.createdAt }
+
+    /** Forget a task and delete the file it produced. */
+    fun remove(id: String): Boolean {
+        val task = tasks.remove(id) ?: return false
+        task.job?.cancel()
+        task.filePath?.delete()
+        bump()
+        return true
+    }
+
+    private fun bump() {
+        _revision.value = _revision.value + 1
+    }
 
     fun cancel(id: String): Task? {
         val task = tasks[id] ?: return null

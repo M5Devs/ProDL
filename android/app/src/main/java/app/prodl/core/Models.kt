@@ -161,6 +161,10 @@ data class InfoResponse(
     val subtitles: List<SubtitleDto> = emptyList(),
     @SerialName("best_video_url") val bestVideoUrl: String? = null,
     @SerialName("best_audio_url") val bestAudioUrl: String? = null,
+    /** Sound-and-picture URL for the in-app player: progressive, else HLS/DASH. */
+    @SerialName("playback_url") val playbackUrl: String? = null,
+    @SerialName("hls_url") val hlsUrl: String? = null,
+    @SerialName("dash_url") val dashMpdUrl: String? = null,
     val sponsorblock: SponsorBlockInfo = SponsorBlockInfo(),
     @SerialName("cookies_used") val cookiesUsed: Boolean = false,
     /** Suggested videos for the Watch view; empty on engines that do not provide them. */

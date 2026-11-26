@@ -8,14 +8,12 @@
     <string name="playback_channel_name">Playback</string>
     <string name="starting_server">Starting local server…</string>
     <string name="server_running">Running on %1$s</string>
-    <string name="server_failed">Could not start the local server. Reopen ProDL to retry.</string>
     <string name="stop">Stop</string>
 
     <string name="save_cookies">Save &amp; Link Cookies</string>
     <string name="cookies_saved">Cookies saved on this device</string>
     <string name="cookies_empty">No YouTube cookies found — sign in first</string>
 
-    <string name="saved_to_downloads">Saved to Downloads/ProDL</string>
     <string name="save_failed">Could not save the file</string>
     <string name="permission_needed">Notifications are off — download progress will be hidden</string>
 </resources>

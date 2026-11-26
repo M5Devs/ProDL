@@ -1,8 +1,10 @@
 package app.prodl.core
 
 import android.content.Context
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
@@ -30,6 +32,7 @@ import kotlin.coroutines.resumeWithException
  * are the only targets it serves here; WEBM has no muxer in Media3 and MP3 has
  * no platform encoder (see [Mp3Writer]).
  */
+@OptIn(UnstableApi::class)
 class Media3Converter(private val context: Context) {
 
     /**

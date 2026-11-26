@@ -100,6 +100,11 @@ class PlayerActivity : ComponentActivity() {
             .setUri(url)
             .setMediaId(url)
             .setMediaMetadata(metadata)
+            .apply {
+                // YouTube's HLS manifest URL has no .m3u8 suffix, so hand the
+                // type over instead of relying on extension sniffing.
+                intent.getStringExtra(EXTRA_MIME)?.let(::setMimeType)
+            }
             .build()
         controller.setMediaItem(item)
         controller.prepare()
@@ -141,6 +146,7 @@ class PlayerActivity : ComponentActivity() {
         private const val EXTRA_THUMBNAIL = "prodl.thumbnail"
         private const val EXTRA_AUDIO_ONLY = "prodl.audio_only"
         private const val EXTRA_SPONSORBLOCK = "prodl.sponsorblock"
+        private const val EXTRA_MIME = "prodl.mime"
 
         fun start(
             context: Context,
@@ -149,6 +155,7 @@ class PlayerActivity : ComponentActivity() {
             thumbnail: String?,
             audioOnly: Boolean,
             sponsorblockJson: String?,
+            mimeType: String? = null,
         ) {
             if (url.isNullOrBlank()) return
             val intent = Intent(context, PlayerActivity::class.java)
@@ -157,6 +164,7 @@ class PlayerActivity : ComponentActivity() {
                 .putExtra(EXTRA_THUMBNAIL, thumbnail)
                 .putExtra(EXTRA_AUDIO_ONLY, audioOnly)
                 .putExtra(EXTRA_SPONSORBLOCK, sponsorblockJson)
+                .putExtra(EXTRA_MIME, mimeType)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         }

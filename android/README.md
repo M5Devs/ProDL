@@ -1,47 +1,56 @@
 # ProDL for Android
 
-ProDL runs **entirely on the phone**. The APK embeds the same static SPA as the
-web build, runs the same JSON API on `127.0.0.1`, and streams media with the
-phone's own IP address. No remote server, no accounts, no analytics, no ads, and
-no Google Play Services / Firebase / ad SDK anywhere in the dependency graph.
+ProDL runs **entirely on the phone**, with a **native Jetpack Compose UI**. There
+is no WebView in the app shell: the screens call the Kotlin engines in-process,
+so playback, search and downloads do not depend on a local HTTP server being up.
+No remote server, no accounts, no analytics, no ads, and no Google Play Services
+/ Firebase / ad SDK anywhere in the dependency graph.
 
 ```
-┌───────────────────────────── app.prodl (single APK) ─────────────────────────────┐
-│                                                                                  │
-│  MainActivity ── WebView ──► assets/frontend/*  (the shared SPA, byte identical)  │
-│       │                        │  window.__PRODL_API_BASE__ = http://127.0.0.1:P │
-│       │                        ▼                                                 │
-│       │                     fetch/WebSocket ──► LocalServer (Ktor + CIO)         │
-│       │                                              │                           │
-│       │                                              ├── MediaService ─► NewPipe │
-│       │                                              │        │  (YouTube, pure  │
-│       │                                              │        │   Java, no Python)│
-│       │                                              │        └─► YtDlp (bundled  │
-│       │                                              │             python, yt-dlp│
-│       │                                              ├── CookieStore (private)   │
-│       │                                              └── SponsorBlockClient      │
-│       │                                                                          │
-│       ├── NativeBridge (window.ProDLNative) ─► PlayerActivity / MediaStore export│
-│       └── ServerService (foreground) keeps the API + downloads alive             │
-│                                                                                  │
-│  PlaybackService (Media3) ── ExoPlayer, lockscreen controls, SponsorBlock skip    │
-└──────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────── app.prodl (single APK) ─────────────────────────────┐
+│                                                                                   │
+│  MainActivity (ComponentActivity) ──► ProDLApp ──► Navigation Compose             │
+│                                          │                                        │
+│      ┌───────────────────────────────────┼────────────────────────────┐           │
+│      ▼               ▼                   ▼                ▼           ▼           │
+│  Discover        Watch             Browse            Downloads     Convert        │
+│  (search/feeds)  (player+related)  (channel/playlist) (task cards)  (ffmpeg-free) │
+│      │               │                   │                │           │           │
+│      └───────────────┴─────────┬─────────┴────────────────┴───────────┘           │
+│                                ▼                                                  │
+│                     ViewModels (StateFlow)                                        │
+│                                │                                                  │
+│   ┌────────────────────────────┼──────────────────────────────┐                   │
+│   ▼                            ▼                              ▼                   │
+│ NewPipeEngine            TaskManager                    MediaPipeline             │
+│ (search/info/kiosk/      (task list, progress)          (MediaMuxer, Media3       │
+│  channel/playlist)              │                        Transformer, LAME, WAV)  │
+│   │                             ▼                              │                   │
+│   │                      MediaService ──► YtDlp (bundled python, slim builds off) │
+│   │                                                           │                   │
+│   ├──► PlaybackService (Media3 ExoPlayer, HLS, lockscreen, SponsorBlock skip)     │
+│   └──► CookieLoginActivity (isolated WebView, Google sign-in only)                │
+│                                                                                   │
+│  Optional: LocalServer (Ktor + CIO) serves the same JSON API to the bundled       │
+│  web UI, a desktop client or a future Android local-server shell.                 │
+└───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `app/src/main/java/app/prodl/core/` | Platform-light domain code: API models, yt-dlp JSON mapping, progress parsing, Netscape cookies, format selection, the native media pipeline (`MediaPipeline`, `Media3Converter`, `NativeMuxer`, `AudioDecoder`, `Mp3Writer`, `WavWriter`, `MediaTargets`), cookie store, SponsorBlock client, MediaStore export |
-| `app/src/main/java/app/prodl/server/` | Ktor server, routes, task manager, download/convert orchestration |
-| `app/src/main/java/app/prodl/bridge/` | `@JavascriptInterface` bridge exposed as `window.ProDLNative` |
+| `app/src/main/java/app/prodl/core/` | Platform-light domain code: API models, yt-dlp JSON mapping, progress parsing, Netscape cookies, format selection, the native media pipeline (`MediaPipeline`, `Media3Converter`, `NativeMuxer`, `AudioDecoder`, `Mp3Writer`, `WavWriter`, `MediaTargets`), cookie store, SponsorBlock client, MediaStore export, and `InputParser` (link/search routing) |
+| `app/src/main/java/app/prodl/ui/` | Compose UI: `ProDLApp` (nav shell), `theme/`, `components/`, `screens/` (Discover, Watch, Browse, Downloads, Convert, Settings, FormatSheet), `AppViewModels`/`TaskViewModels`, `PlayerHost` (Media3 session + fullscreen) |
+| `app/src/main/java/app/prodl/server/` | Ktor server, routes, task manager, download/convert orchestration (used by the optional loopback API and the bundled web UI) |
 | `app/src/main/java/app/prodl/playback/` | Media3 session service, PiP player activity, SponsorBlock skipper |
 | `app/src/main/java/app/prodl/service/` | Foreground service that owns the server lifetime |
 | `app/src/test/java/app/prodl/` | JVM unit tests (no Android device required) |
 
-`assets/frontend/` is **generated**: `syncFrontendAssets` copies `../frontend`
-into the APK at build time. Nothing is duplicated into version control, so the
-HTML/CSS/JS can never drift between web, desktop and Android.
+The APK ships **no HTML at all**: `frontend/` belongs to the Web and Desktop
+builds. The optional loopback server answers `GET /` with the API index, so a
+browser, a desktop client or a future Android local-server shell can drive the
+phone over `http://127.0.0.1:<port>`.
 
 ### Why there is no bundled ffmpeg
 
@@ -137,16 +146,41 @@ NewPipe streams are downloaded straight from `googlevideo.com` with OkHttp:
 Progress maps both tracks into one percentage (video 0–70 %, audio 70–100 %)
 and then reports the mux, using the existing WebSocket/SSE pipeline.
 
+## Native UI, engine-backed
+
+Every screen is Compose and talks to the engines directly — no HTTP hop, no JS
+bridge, no asset loading:
+
+| Screen | Engines it drives |
+| --- | --- |
+| **Discover** | `NewPipeEngine.search()` with the all/videos/channels/playlists filter, `NewPipeEngine.kiosk()` for the Live / Gaming / Podcasts feeds, and `InputParser` so a pasted link jumps straight to the right screen |
+| **Watch** | `NewPipeEngine.info()` → `playback_url` (progressive, else the HLS/DASH manifest), related videos, SponsorBlock segments handed to `PlaybackService`, `FormatSheet` → `DownloadsViewModel.startDownload()` |
+| **Browse** | `NewPipeEngine.channel()` (the extractor's *videos* tab) and `playlist()` |
+| **Downloads** | `TaskManager` `StateFlow` (percent, speed, ETA, output path) with cancel and "save to Downloads" via MediaStore |
+| **Convert** | `ConvertViewModel` → `MediaPipeline` (MP3/M4A/WAV, trim) with live progress |
+| **Settings** | Engine health (`/api/health` equivalent computed in-process), cookie linking via `CookieLoginActivity`, notification permission, and the optional loopback server toggle |
+
+Playback detail worth knowing: YouTube often returns **no progressive stream**,
+only separate video/audio tracks. A video-only URL would play silently, so
+`NewPipeMapper.info()` exposes `playback_url` = progressive → HLS → DASH, and
+the player sets `MimeTypes.APPLICATION_M3U8` explicitly because the manifest URL
+has no `.m3u8` suffix for ExoPlayer to sniff.
+
+`CookieLoginActivity` keeps the only WebView in the app: Google's sign-in page
+refuses to run outside a real browser engine. Cookies are converted to Netscape
+format and stored on-device only.
+
 ## API parity with `API_SPEC.md`
 
-The Android build serves the same paths as the Python backend, so the SPA needs
-no platform branch:
+The loopback server is optional now, but it still serves the same paths as the
+Python backend, so any client — the web build pointed at the phone, a desktop
+app, a future local-server shell — needs no platform branch:
 
 | `API_SPEC.md` | Android implementation |
 | --- | --- |
 | `GET /api`, `/api/health`, `/api/openapi.json` | `ApiRoutes` + `LocalServer.health()` (reports yt-dlp, `transcoder`, QuickJS, cookie state, feature flags) |
 | `GET /api/search` | NewPipeExtractor (with `type=all\|videos\|channels\|playlists`), else `yt-dlp "ytsearchN:q" --flat-playlist`; no API key |
-| `GET /api/info` | NewPipeExtractor or `yt-dlp -J` → formats, subtitles, `best_video_url`/`best_audio_url` (ad-free direct stream), `related` videos, optional SponsorBlock segments |
+| `GET /api/info` | NewPipeExtractor or `yt-dlp -J` → formats, subtitles, `best_video_url`/`best_audio_url` (ad-free direct stream), `playback_url`/`hls_url`/`dash_url`, `related` videos, optional SponsorBlock segments |
 | `POST /api/download` | `MediaService.startDownload` → `202` + `task_id` |
 | `WS /api/ws/progress/{task_id}`, SSE `GET /api/progress/{task_id}` | Same `ProgressEvent` schema; both close on the terminal event, `{"type":"ping"}` keep-alives |
 | `GET/POST/DELETE /api/cookies`, `POST /api/cookies/upload` | `CookieStore` in app-private storage (never backed up) |
@@ -154,25 +188,9 @@ no platform branch:
 | `GET/DELETE /api/files/{task_id}` | Streams the finished file from the app's download directory |
 
 Path-relative `download_url`/`websocket_url`/`sse_url` values and `{"detail": …}`
-errors match the specification, so the same `frontend/js/api.js` drives both
-backends.
-
-## Android-only surface
-
-The shared SPA does not know about Android. Anything platform-specific is
-opt-in through `window.ProDLNative`:
-
-| Method | Effect |
-| --- | --- |
-| `apiBase()`, `platform()`, `version()`, `serverStatus()` | Shell introspection |
-| `playMedia(url, title, thumbnail, audioOnly, sponsorblockJson)` | Native Media3 playback (direct stream URL → ad-free) with PiP; SponsorBlock segments are skipped automatically |
-| `openYouTubeLogin()` | In-app Google sign-in WebView; cookies are converted to Netscape format and stored on-device only |
-| `saveToDownloads(taskId)` | Publishes to `Downloads/ProDL` via MediaStore (no storage permission on Android 10+) |
-| `checkPermissions()`, `requestPermissions()` | Notification permission state |
-| `toast(message)` | Native toast |
-
-Download links (`/api/files/<id>`) are intercepted by the WebView so "Save link"
-also lands in `Downloads/ProDL` without a network round-trip.
+errors match the specification, so `frontend/js/api.js` works against both
+backends unchanged. The native UI never touches the server: Settings →
+*Local server (optional)* only starts it for remote control.
 
 ## Build
 
@@ -182,19 +200,22 @@ export ANDROID_HOME="$HOME/android-sdk"      # or set sdk.dir in android/local.p
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
 cd android
-./gradlew :app:testDebugUnitTest   # 39 JVM tests
+./gradlew :app:testDebugUnitTest   # 68 JVM tests (5 live ones self-skip)
 ./gradlew :app:lintDebug
 ./gradlew :app:assembleDebug       # -> one APK per CPU architecture
 ```
 
-`assembleDebug` produces four split APKs instead of one fat 217 MB APK:
+`assembleDebug` produces four split APKs instead of one fat APK:
 
 | APK | Size (debug) | Install if… |
 | --- | --- | --- |
-| `app-arm64-v8a-debug.apk` | ~68 MB | **Almost all modern phones** (64-bit ARM, Android 8+) |
+| `app-arm64-v8a-debug.apk` | ~64 MB | **Almost all modern phones** (64-bit ARM, Android 8+) |
 | `app-armeabi-v7a-debug.apk` | ~61 MB | Older/cheap 32-bit phones |
-| `app-x86_64-debug.apk` | ~71 MB | Standard emulator (`x86_64` system image) |
-| `app-x86-debug.apk` | ~67 MB | Legacy 32-bit emulators, Chromebooks with 32-bit images |
+| `app-x86_64-debug.apk` | ~64 MB | Standard emulator (`x86_64` system image) |
+| `app-x86-debug.apk` | ~64 MB | Legacy 32-bit emulators, Chromebooks with 32-bit images |
+
+Debug builds are unminified: Compose alone adds ~90 MB of dex, so these numbers
+say nothing about release size (see the table below).
 
 Install the one that matches your device:
 `adb install app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`. Picking the
@@ -202,20 +223,21 @@ wrong one fails at install with `INSTALL_FAILED_NO_MATCHING_ABIS`.
 Not sure which you need? `adb shell getprop ro.product.cpu.abi` prints it.
 
 Each APK carries exactly one `lib/<abi>/` tree and gets its own version code,
-`baseVersionCode * 10 + abiCode` (`200001` arm64, `200002` armv7, `200003`
-x86_64, `200004` x86) so stores and `adb` treat them as distinct builds. Bump
+`baseVersionCode * 10 + abiCode` (`200101` arm64, `200102` armv7, `200103`
+x86_64, `200104` x86) so stores and `adb` treat them as distinct builds. Bump
 `baseVersionCode` in `app/build.gradle.kts` once per release.
 
-Measured on 2.1.0, per architecture (minified release):
+Measured on 2.1.0, arm64-v8a:
 
 | Build | Size | Engine |
 | --- | --- | --- |
-| default (debug) | ~47 MB | NewPipeExtractor + CPython/yt-dlp + native pipeline |
-| default (`PRODL_MINIFY=1`) | **22 MB** | same, shrunk |
-| `-PprodlSlim=true` (`PRODL_MINIFY=1`) | **4.0 MB** | NewPipeExtractor + native pipeline, no Python, no ffmpeg |
+| default (debug) | ~64 MB | NewPipeExtractor + CPython/yt-dlp + native pipeline |
+| `-PprodlSlim=true` (debug) | ~48 MB | NewPipeExtractor + native pipeline, no Python |
+| default (`PRODL_MINIFY=1`, release) | **22.8 MB** | same as default, R8-shrunk |
+| `-PprodlSlim=true` (`PRODL_MINIFY=1`) | **5.2 MB** | no Python, R8-shrunk |
 
-Removing the 35.6 MB ffmpeg payload cut the debug APK from 67 MB to 33 MB
-(slim) / 47 MB (full); R8 takes the release builds to 4.0 MB / 22 MB.
+Removing the 35.6 MB ffmpeg payload is what made the slim variant possible at
+all; the Compose UI that replaced the WebView SPA costs a couple of MB after R8.
 `-PprodlUniversal` builds
 the single fat APK as well; minification is opt-in:
 `PRODL_MINIFY=1 ./gradlew :app:assembleRelease`.
@@ -238,11 +260,28 @@ and are shared with the Python implementation's behaviour:
   byte count; WAV headers are verified byte by byte
 - Netscape cookie parsing/serialisation, dedupe, cookie-header conversion
 - SponsorBlock skip decisions
+- `InputParser`: search vs. video vs. channel vs. playlist routing for every URL
+  shape users paste (`watch?v=`, `youtu.be`, `/shorts/`, `/live/`, `@handle`,
+  `/channel/`, `/playlist?list=`, bare ids), plus scheme-less input
+- `playback_url` selection: progressive wins, HLS/DASH beat a silent video-only URL
+
+The extractor calls are covered by an **opt-in** live suite, because they need
+YouTube to answer:
+
+```bash
+PRODL_LIVE=1 ./gradlew :app:testDebugUnitTest --tests '*NewPipeApiTest*'
+```
+
+It exercises search, every kiosk id the Discover chips offer, the channel
+*videos* tab, a playlist taken from that channel, and the watch page (formats,
+subtitles, HLS/DASH). Without `PRODL_LIVE=1` those five tests skip themselves, so
+CI stays hermetic.
 
 ## Privacy & security
 
-- The API binds **127.0.0.1 only** on an ephemeral port; nothing on the LAN can reach it.
-- CORS is open because the SPA is a `file://` origin inside the WebView; loopback binding is the actual access control.
+- The native UI needs no network listener at all; it calls the engines in-process.
+- The optional API binds **127.0.0.1 only** on an ephemeral port; nothing on the LAN can reach it.
+- CORS is open because the bundled SPA is a `file://` origin; loopback binding is the actual access control.
 - Cookies live in `filesDir/prodl/cookies.txt`, excluded from cloud backup and device transfer (`backup_rules.xml`, `data_extraction_rules.xml`).
 - No telemetry, no crash reporting, no third-party network calls except YouTube/SponsorBlock on the user's behalf.
 - `usesCleartextTraffic` exists purely for `http://127.0.0.1`.
@@ -266,5 +305,11 @@ attribution for the bundled binaries lives in [NOTICE.md](NOTICE.md).
 ## Known limits
 
 - YouTube sometimes demands a signed-in session ("Sign in to confirm you're not a bot"); the in-app **Link YouTube account** flow fixes that with cookies.
-- A single foreground notification covers the server; per-task notifications are not implemented (progress is in the UI and over the API).
-- Playlists are supported by yt-dlp but the SPA only exposes single-video flows today.
+- Extractor 0.27.1's plain **Trending** kiosk is broken upstream (YouTube dropped the
+  "Now/Videos" tabs it parses) and the music/movies kiosks return nothing, so
+  Discover offers Live / Gaming / Podcasts instead. `DiscoverViewModel` still
+  walks the feed list until one returns items.
+- Download notifications are per-task; the server (when enabled) keeps one
+  foreground notification of its own.
+- Playlist *playback* is single-video: the playlist screen lists videos, and
+  each one opens in Watch.

@@ -88,7 +88,7 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
 
-      - name: Verify split APKs (per ABI assets, libs, versionCode)
+      - name: Verify split APKs (per ABI libs, versionCode, no Play Services)
         run: |
           python3 - <<'PY'
           import json, os, re, sys, zipfile
@@ -103,12 +103,16 @@ jobs:
           expected = {abi: base * 10 + code for abi, code in abi_codes.items()}
           if len(expected) != 4:
               sys.exit(f"could not read abiVersionCodes from build.gradle.kts: {expected}")
-          required = [
-              "assets/frontend/index.html",
-              "assets/frontend/js/api.js",
-              "assets/frontend/js/app.js",
-              "assets/frontend/js/config.js",
-              "assets/frontend/css/styles.css",
+          # The Android UI is native Compose now, so there is no SPA payload to
+          # check. These are the pieces a real installable APK must carry.
+          required = ["classes.dex", "AndroidManifest.xml", "resources.arsc"]
+          # AGPL-clean: the APK must not ship Google Play Services, Firebase,
+          # ad SDKs or an embedded WebView SPA.
+          forbidden_prefixes = ["assets/frontend/"]
+          forbidden_markers = [
+              b"com/google/android/gms",
+              b"com/google/firebase",
+              b"com/google/android/ads",
           ]
           out = "app/build/outputs/apk/debug"
           codes = {}
@@ -124,17 +128,25 @@ jobs:
               if not os.path.isfile(apk):
                   problems.append(f"{abi}: missing {apk}")
                   continue
-              names = zipfile.ZipFile(apk).namelist()
+              archive = zipfile.ZipFile(apk)
+              names = archive.namelist()
               missing = [p for p in required if p not in names]
               if missing:
-                  problems.append(f"{abi}: missing shared frontend assets {missing}")
+                  problems.append(f"{abi}: missing APK entries {missing}")
+              leftovers = [n for n in names if any(n.startswith(p) for p in forbidden_prefixes)]
+              if leftovers:
+                  problems.append(f"{abi}: WebView SPA assets still packaged: {leftovers[:3]}")
+              dex = b"".join(archive.read(n) for n in names if n.endswith(".dex"))
+              for marker in forbidden_markers:
+                  if marker in dex:
+                      problems.append(f"{abi}: forbidden SDK present ({marker.decode()})")
               libs = sorted({n.split("/")[1] for n in names if n.startswith("lib/")})
               if libs != [abi]:
                   problems.append(f"{abi}: native libs are {libs}, expected only [{abi}]")
               if codes.get(abi) != version_code:
                   problems.append(f"{abi}: versionCode {codes.get(abi)} != {version_code}")
               print(f"{os.path.basename(apk)}: {os.path.getsize(apk) / 1e6:.1f} MB, "
-                    f"libs={libs}, versionCode={codes.get(abi)}, SPA present={not missing}")
+                    f"libs={libs}, versionCode={codes.get(abi)}, compose-only={not leftovers}")
 
           if problems:
               sys.exit("split APK problems:\n" + "\n".join(problems))

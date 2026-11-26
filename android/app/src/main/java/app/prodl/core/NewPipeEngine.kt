@@ -13,6 +13,8 @@ import okhttp3.Request as HttpRequest
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.Image
+import org.schabi.newpipe.extractor.ListExtractor
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.stream.AudioStream
@@ -146,42 +148,7 @@ class NewPipeEngine(context: Context) {
                 if (next == null) break
                 page = extractor.getPage(next)
             }
-            val results = items.take(limit).mapNotNull { item ->
-                when (item) {
-                    is StreamInfoItem -> NewPipeMapper.searchItem(
-                        url = item.url,
-                        name = item.name,
-                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
-                        duration = item.duration.takeIf { it > 0 }?.toDouble(),
-                        uploader = item.uploaderName,
-                        viewCount = item.viewCount,
-                    )
-
-                    is ChannelInfoItem -> NewPipeMapper.searchItem(
-                        url = item.url,
-                        name = item.name,
-                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
-                        duration = null,
-                        uploader = item.name,
-                        viewCount = null,
-                        kind = "channel",
-                        itemCount = item.subscriberCount.takeIf { it >= 0 },
-                    )
-
-                    is PlaylistInfoItem -> NewPipeMapper.searchItem(
-                        url = item.url,
-                        name = item.name,
-                        thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
-                        duration = null,
-                        uploader = item.uploaderName,
-                        viewCount = null,
-                        kind = "playlist",
-                        itemCount = item.streamCount.takeIf { it >= 0 },
-                    )
-
-                    else -> null
-                }
-            }
+            val results = items.take(limit).mapNotNull(::toSearchItem)
             SearchResponse(
                 query = query,
                 limit = limit,
@@ -197,6 +164,147 @@ class NewPipeEngine(context: Context) {
         "channels", "channel" -> "channels"
         "playlists", "playlist" -> "playlists"
         else -> "all"
+    }
+
+    /**
+     * Trending / Discover feeds. YouTube removed the plain "Trending" shelf in
+     * July 2025, so the extractor exposes several kiosks (`live`,
+     * `trending_music`, `trending_gaming`, `trending_movies_and_shows`,
+     * `trending_podcasts_episodes`, plus the deprecated `Trending`). The UI asks
+     * for one of these ids; [kiosks] reports which the library actually has.
+     */
+    suspend fun kiosk(id: String, limit: Int): List<SearchItem> = withContext(Dispatchers.IO) {
+        requireReady()
+        val service = NewPipe.getService(ServiceList.YouTube.serviceId)
+        val kioskList = service.kioskList
+        if (id !in kioskList.availableKiosks) {
+            throw YtDlpException("This feed ($id) is not available from YouTube right now")
+        }
+        val extractor = kioskList.getExtractorById(id, null)
+        extractor.fetchPage()
+        collect(extractor, limit)
+    }
+
+    /** Kiosk ids the extractor knows, in the order the Discover chips show them. */
+    fun kiosks(): List<Kiosk> = runCatching {
+        val available = NewPipe.getService(ServiceList.YouTube.serviceId)
+            .kioskList.availableKiosks
+        KIOSKS.filter { it.id in available }
+    }.getOrDefault(KIOSKS)
+
+    data class Kiosk(val id: String, val label: String)
+
+    /**
+     * Channel uploads, with the header the channel screen renders. The channel
+     * extractor itself only carries metadata in v0.27 — the videos live behind
+     * one of its tabs, so the "videos" tab is opened explicitly.
+     */
+    suspend fun channel(url: String, limit: Int): BrowseResult = withContext(Dispatchers.IO) {
+        requireReady()
+        val service = NewPipe.getService(ServiceList.YouTube.serviceId)
+        val extractor = service.getChannelExtractor(url)
+        extractor.fetchPage()
+        val tabs = runCatching { extractor.tabs }.getOrNull().orEmpty()
+        val videosTab = tabs.firstOrNull {
+            it.contentFilters.firstOrNull()?.equals("videos", ignoreCase = true) == true
+        } ?: tabs.firstOrNull()
+        val items = if (videosTab == null) {
+            emptyList()
+        } else {
+            val tabExtractor = service.getChannelTabExtractor(videosTab)
+            tabExtractor.fetchPage()
+            collect(tabExtractor, limit)
+        }
+        BrowseResult(
+            url = url,
+            kind = "channel",
+            title = runCatching { extractor.name }.getOrNull() ?: "Channel",
+            subtitle = runCatching { extractor.subscriberCount }
+                .getOrNull()?.takeIf { it >= 0 }?.let { "${formatCount(it)} subscribers" },
+            banner = runCatching { extractor.banners }.getOrNull()?.best(),
+            avatar = runCatching { extractor.avatars }.getOrNull()?.best(),
+            description = runCatching { extractor.description }.getOrNull()?.takeIf { it.isNotBlank() },
+            items = items,
+        )
+    }
+
+    /** Playlist videos, with the header the playlist screen renders. */
+    suspend fun playlist(url: String, limit: Int): BrowseResult = withContext(Dispatchers.IO) {
+        requireReady()
+        val service = NewPipe.getService(ServiceList.YouTube.serviceId)
+        val extractor = service.getPlaylistExtractor(url)
+        extractor.fetchPage()
+        BrowseResult(
+            url = url,
+            kind = "playlist",
+            title = runCatching { extractor.name }.getOrNull() ?: "Playlist",
+            subtitle = listOfNotNull(
+                runCatching { extractor.uploaderName }.getOrNull()?.takeIf { it.isNotBlank() },
+                runCatching { extractor.streamCount }.getOrNull()
+                    ?.takeIf { it >= 0 }?.let { "${formatCount(it)} videos" },
+            ).joinToString(" · ").ifBlank { null },
+            banner = runCatching { extractor.banners }.getOrNull()?.best(),
+            avatar = runCatching { extractor.thumbnails }.getOrNull()?.best(),
+            description = runCatching { extractor.description.content }.getOrNull()?.takeIf { it.isNotBlank() },
+            items = collect(extractor, limit),
+        )
+    }
+
+    /** Walk the extractor's pages until [limit] items or the end of the list. */
+    private fun collect(extractor: ListExtractor<*>, limit: Int): List<SearchItem> {
+        val items = mutableListOf<InfoItem>()
+        var page: ListExtractor.InfoItemsPage<*> = extractor.initialPage
+        while (items.size < limit) {
+            items += page.items.filterIsInstance<InfoItem>()
+            val next = page.nextPage ?: break
+            page = extractor.getPage(next)
+        }
+        return items.take(limit).mapNotNull(::toSearchItem)
+    }
+
+    private fun toSearchItem(item: InfoItem): SearchItem? = when (item) {
+        is StreamInfoItem -> NewPipeMapper.searchItem(
+            url = item.url,
+            name = item.name,
+            thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+            duration = item.duration.takeIf { it > 0 }?.toDouble(),
+            uploader = item.uploaderName,
+            viewCount = item.viewCount,
+        )
+
+        is ChannelInfoItem -> NewPipeMapper.searchItem(
+            url = item.url,
+            name = item.name,
+            thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+            duration = null,
+            uploader = item.name,
+            viewCount = null,
+            kind = "channel",
+            itemCount = item.subscriberCount.takeIf { it >= 0 },
+        )
+
+        is PlaylistInfoItem -> NewPipeMapper.searchItem(
+            url = item.url,
+            name = item.name,
+            thumbnail = item.thumbnails.maxByOrNull { it.height }?.url,
+            duration = null,
+            uploader = item.uploaderName,
+            viewCount = null,
+            kind = "playlist",
+            itemCount = item.streamCount.takeIf { it >= 0 },
+        )
+
+        else -> null
+    }
+
+    private fun List<Image>.best(): String? = maxByOrNull { it.height }?.url
+
+    /** `1234567` → `1.2M`, for subscriber and video counts. */
+    private fun formatCount(value: Long): String = when {
+        value >= 1_000_000_000 -> String.format(Locale.US, "%.1fB", value / 1_000_000_000.0)
+        value >= 1_000_000 -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
+        value >= 1_000 -> String.format(Locale.US, "%.1fK", value / 1_000.0)
+        else -> value.toString()
     }
 
     suspend fun info(url: String): InfoResponse = withContext(Dispatchers.IO) {
@@ -252,6 +360,8 @@ class NewPipeEngine(context: Context) {
                         uploader = item.uploaderName,
                     )
                 },
+            hlsUrl = runCatching { extractor.hlsUrl }.getOrNull()?.takeIf { it.isNotBlank() },
+            dashMpdUrl = runCatching { extractor.dashMpdUrl }.getOrNull()?.takeIf { it.isNotBlank() },
         )
         if (media.muxed.isEmpty() && media.videoOnly.isEmpty() && media.audio.isEmpty()) {
             throw YtDlpException("NewPipeExtractor found no playable streams for this video")
@@ -381,6 +491,21 @@ class NewPipeEngine(context: Context) {
     )
 
     companion object {
+        /**
+         * Order matters: `Trending` is what users expect first, but YouTube
+         * retired it, so [kiosks] drops it when the extractor does not offer it
+         * and the UI falls back to the next entry.
+         */
+        // Only feeds that actually return items on extractor 0.27.1: the plain
+        // "Trending" kiosk throws (YouTube dropped the Now/Videos tabs it parses)
+        // and the music/movies kiosks come back empty, so offering them would
+        // just show an error or a blank screen.
+        private val KIOSKS = listOf(
+            Kiosk("live", "Live"),
+            Kiosk("trending_gaming", "Gaming"),
+            Kiosk("trending_podcasts_episodes", "Podcasts"),
+        )
+
         private const val TAG = "ProDL.NewPipe"
         private const val CACHE_TTL_MS = 10 * 60 * 1000L
         private const val RELATED_LIMIT = 12

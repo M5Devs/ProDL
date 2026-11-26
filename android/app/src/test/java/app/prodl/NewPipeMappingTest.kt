@@ -180,6 +180,31 @@ class NewPipeMappingTest {
     }
 
     @Test
+    fun `playback prefers a stream that carries sound`() {
+        // Progressive first: it plays as-is.
+        val progressive = NewPipeMapper.info(media)
+        assertEquals("https://media.example/v18", progressive.playbackUrl)
+
+        // YouTube frequently ships no progressive stream at all. The HLS
+        // manifest then beats the video-only URL, which would be silent.
+        val separated = NewPipeMapper.info(
+            media.copy(
+                muxed = emptyList(),
+                hlsUrl = "https://manifest.example/hls.m3u8",
+                dashMpdUrl = "https://manifest.example/dash.mpd",
+            ),
+        )
+        assertEquals("https://manifest.example/hls.m3u8", separated.playbackUrl)
+        assertEquals("https://manifest.example/hls.m3u8", separated.hlsUrl)
+        assertTrue("video-only fallback still exposed", separated.bestVideoUrl!!.contains("/v137"))
+
+        val dashOnly = NewPipeMapper.info(
+            media.copy(muxed = emptyList(), dashMpdUrl = "https://manifest.example/dash.mpd"),
+        )
+        assertEquals("https://manifest.example/dash.mpd", dashOnly.playbackUrl)
+    }
+
+    @Test
     fun `video ids are read from every youtube url shape`() {
         assertEquals("dQw4w9WgXcQ", NewPipeMapper.videoIdOf("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10s"))
         assertEquals("dQw4w9WgXcQ", NewPipeMapper.videoIdOf("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))

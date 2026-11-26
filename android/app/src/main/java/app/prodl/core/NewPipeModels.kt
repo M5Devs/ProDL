@@ -44,6 +44,23 @@ data class NpMedia(
     val audio: List<NpStream> = emptyList(),
     val subtitles: List<SubtitleDto> = emptyList(),
     val related: List<RelatedItem> = emptyList(),
+    val hlsUrl: String? = null,
+    val dashMpdUrl: String? = null,
+)
+
+/**
+ * One browsable list: a channel's uploads or a playlist's videos, with the
+ * header metadata the Discover → Channel/Playlist screen shows.
+ */
+data class BrowseResult(
+    val url: String,
+    val kind: String,
+    val title: String,
+    val subtitle: String? = null,
+    val banner: String? = null,
+    val avatar: String? = null,
+    val description: String? = null,
+    val items: List<SearchItem> = emptyList(),
 )
 
 /**
@@ -244,6 +261,11 @@ object NewPipeMapper {
             // only fall back to video-only when YouTube offers nothing muxed.
             bestVideoUrl = muxed?.url ?: video?.url ?: formats.firstOrNull { it.hasVideo }?.directUrl,
             bestAudioUrl = bestAudio(media)?.url ?: formats.firstOrNull { !it.hasVideo && it.directUrl != null }?.directUrl,
+            // YouTube often ships no progressive stream at all, and a video-only
+            // URL would play silently: the manifests carry both tracks.
+            playbackUrl = muxed?.url ?: media.hlsUrl ?: media.dashMpdUrl ?: video?.url,
+            hlsUrl = media.hlsUrl,
+            dashMpdUrl = media.dashMpdUrl,
             sponsorblock = sponsorBlock,
             cookiesUsed = cookiesUsed,
             related = media.related,

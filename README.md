@@ -224,12 +224,16 @@ Three YouTube-style behaviours keep the library honest and quick:
 
 It ships with **zero external requests**: no CDN, no Google Fonts, no icon
 fonts — the icons are inline SVG, the CSS is one local file, and every state in
-the UI comes from the API. That is what lets the same bundle run untouched
-inside the Android WebView. Two native hooks are used when they exist:
-`window.ProDLNative.playMedia(...)` for ad-free playback (falls back to an
-HTML5 `<video>`/`<audio>` element with SponsorBlock skipping) and
-`window.ProDLNative.openYouTubeLogin()` for the in-app sign-in (the button is
-disabled with an explanation elsewhere).
+the UI comes from the API. That is what lets the same bundle run untouched in a
+plain `file://` browser, inside a desktop WebView, or served by the Android
+loopback server. The native hooks (`window.ProDLNative.playMedia(...)` and
+`window.ProDLNative.openYouTubeLogin()`) are used when a host provides them and
+are simply absent otherwise.
+
+The **Android app is no longer this SPA in a WebView**: it is a native Jetpack
+Compose UI wired straight to the same Kotlin engines (NewPipeExtractor, Media3,
+MediaMuxer, LAME), with the WebView kept only for Google sign-in. See
+[android/README.md](android/README.md).
 
 Resolution order for the API base URL:
 `?api=` → `localStorage` → `window.__PRODL_API_BASE__` → `window.PRODL_CONFIG.apiBaseUrl`

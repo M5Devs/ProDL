@@ -5,6 +5,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Release number; each APK gets `baseVersionCode * 10 + abiCode` so Play
@@ -26,28 +27,6 @@ val abiVersionCodes = linkedMapOf(
     "x86_64" to 3,
     "x86" to 4,
 )
-
-// ---------------------------------------------------------------------------
-// Shared UI: the APK ships the exact same SPA as the web build.  Nothing is
-// copied into version control — `frontend/` is synced into a generated assets
-// directory at build time, so HTML/CSS/JS can never drift between targets.
-// ---------------------------------------------------------------------------
-val frontendSource = rootProject.layout.projectDirectory.dir("../frontend")
-val frontendAssets = layout.buildDirectory.dir("generated/frontendAssets")
-
-val syncFrontendAssets by tasks.registering(Sync::class) {
-    group = "build"
-    description = "Copy the shared frontend/ SPA into the APK assets."
-    from(frontendSource) {
-        exclude("**/*.map", "**/.DS_Store", "**/*.md")
-    }
-    into(frontendAssets.map { it.dir("frontend") })
-    doFirst {
-        require(frontendSource.file("index.html").asFile.isFile) {
-            "frontend/index.html not found — the shared SPA is required for the Android build"
-        }
-    }
-}
 
 android {
     namespace = "app.prodl"
@@ -79,10 +58,10 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
 
     sourceSets.getByName("main") {
-        assets.srcDir(frontendAssets)
         // The slim build has no youtubedl-android on the classpath, so the real
         // wrapper is swapped for a stub with the same surface.
         // The yt-dlp wrapper is the only source that touches youtubedl-android,
@@ -168,23 +147,34 @@ kotlin {
     }
 }
 
-// Assets must exist before the APK packaging step runs.
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(syncFrontendAssets)
-}
-tasks.named("preBuild") {
-    dependsOn(syncFrontendAssets)
-}
-
 dependencies {
     val ktorVersion = "3.6.2"
     val media3Version = "1.11.1"
     val youtubedlVersion = "0.18.1"
     val okhttpVersion = "4.12.0"
+    val composeBom = "2025.09.01"
+    val coilVersion = "3.3.0"
 
     implementation("androidx.core:core-ktx:1.18.0")
-    implementation("androidx.activity:activity-ktx:1.13.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.1")
+    implementation("androidx.activity:activity-ktx:1.11.0")
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+
+    // Native UI: Jetpack Compose + Material 3. The WebView SPA is gone from
+    // Android; `frontend/` still serves the Web/Desktop builds.
+    implementation(platform("androidx.compose:compose-bom:$composeBom"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.navigation:navigation-compose:2.9.5")
+    // Async thumbnails with memory+disk cache, so the feed scrolls smoothly.
+    implementation("io.coil-kt.coil3:coil-compose:$coilVersion")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:$coilVersion")
+    debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
 
@@ -202,6 +192,7 @@ dependencies {
 
     // Native playback: background audio, MediaSession controls, PiP.
     implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 

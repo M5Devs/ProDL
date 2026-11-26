@@ -382,6 +382,9 @@ optional SponsorBlock segments for one media URL.
   ],
   "best_video_url": "https://rr1---sn-...googlevideo.com/videoplayback?...",
   "best_audio_url": "https://rr1---sn-...googlevideo.com/videoplayback?...",
+  "playback_url": "https://rr1---sn-...googlevideo.com/videoplayback?...",
+  "hls_url": null,
+  "dash_url": null,
   "related": [
     {
       "id": "9bZkp7q19f0",
@@ -413,8 +416,15 @@ optional SponsorBlock segments for one media URL.
 Notes
 
 - `direct_url` / `best_video_url` / `best_audio_url` are CDN links intended for
-  in-app playback (no ads, no player). They are short-lived and bound to the
+  in-app playback (no ads, no player). They are short-lived and bound by the
   requesting IP — refresh by calling `/api/info` again.
+- `playback_url` is the URL to hand a player when the two tracks are separate.
+  YouTube frequently returns no progressive stream at all, and `best_video_url`
+  then points at a **video-only** stream that would play silently; `playback_url`
+  resolves progressive → `hls_url` → `dash_url` → video-only. Clients that know
+  how to play manifests should prefer it and treat `hls_url` as
+  `application/x-mpegURL` (`hls_url`/`dash_url` are `null` from the Python
+  backend, which always merges with ffmpeg).
 - Single-file sources (generic direct links) return exactly one synthetic format
   with `format_id: "best"`.
 - SponsorBlock failures never fail the request: `sponsorblock.error` carries the
