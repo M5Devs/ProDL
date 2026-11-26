@@ -25,11 +25,32 @@ repository, as required.
 
 | Component | Licence |
 | --- | --- |
+| **NewPipeExtractor** (`com.github.teamnewpipe`, JitPack) | **GPL-3.0-or-later** — <https://github.com/TeamNewPipe/NewPipeExtractor> |
 | AndroidX Core, Activity, Lifecycle, Media3 (ExoPlayer, Session, UI) | Apache-2.0 |
 | Ktor server (CIO, WebSockets, CORS, ContentNegotiation, PartialContent) | Apache-2.0 |
 | kotlinx-serialization, kotlinx-coroutines | Apache-2.0 |
 | OkHttp / Okio | Apache-2.0 |
 | Jackson (YAML/JSON for yt-dlp's config) | Apache-2.0 |
+| jsoup (HTML parsing, via NewPipeExtractor) | MIT |
+| Mozilla Rhino (JavaScript interpreter, via NewPipeExtractor) | MPL-2.0 |
+| protobuf-javalite (YouTube response protos, via NewPipeExtractor) | BSD-3-Clause |
+| nanojson (via NewPipeExtractor) | Apache-2.0 / MIT |
+| desugar_jdk_libs_nio (Java 8+ APIs on API 26) | Apache-2.0 |
+
+### NewPipeExtractor (GPL-3.0-or-later)
+
+ProDL's primary YouTube engine is
+[NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor), the library
+behind NewPipe and LibreTube, used unmodified from its JitPack release
+(`v0.27.1`). It is GPL-3.0-or-later; combined with this AGPL-3.0 application the
+whole work stays free software, and the complete corresponding source of the
+Android app (including this directory) is published in this repository.
+
+The integration follows the pattern shipped by
+[LibreTube](https://github.com/libre-tube/LibreTube): `NewPipe.init(downloader)`
+with an OkHttp-backed `Downloader`, and
+[JunkFood02/Seal](https://github.com/JunkFood02/Seal) for the bundled
+yt-dlp/ffmpeg handling. No NewPipeExtractor source is patched.
 
 ## Network services used on the user's behalf
 

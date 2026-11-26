@@ -11,6 +11,7 @@ import app.prodl.core.CookieStore
 import app.prodl.core.CookieFormatException
 import app.prodl.core.ErrorResponse
 import app.prodl.core.FfmpegRunner
+import app.prodl.core.NewPipeEngine
 import app.prodl.core.HealthResponse
 import app.prodl.core.ServerConfig
 import app.prodl.core.SponsorBlockClient
@@ -54,10 +55,11 @@ class LocalServer(
     val tasks = TaskManager(config.maxTasks, config.taskTtlSeconds)
     val cookies = CookieStore(config.cookiesFile)
     private val yt = YtDlp(context)
+    val newpipe = NewPipeEngine(context)
     private val ffmpeg = FfmpegRunner(context)
     private val sponsor = SponsorBlockClient(config.sponsorBlockApi, config.sponsorBlockCategories)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val media = MediaService(context, config, tasks, yt, ffmpeg, cookies, sponsor, scope)
+    val media = MediaService(config, tasks, yt, newpipe, ffmpeg, cookies, sponsor, scope)
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private val startedAt = System.currentTimeMillis()
@@ -70,9 +72,12 @@ class LocalServer(
 
     fun uptimeSeconds(): Double = (System.currentTimeMillis() - startedAt) / 1000.0
 
-    /** Kick off binary extraction early so the first request is not slow. */
+    /** Kick off engine start-up early so the first request is not slow. */
     fun prepare() {
         config.ensureDirectories()
+        // NewPipeExtractor needs no extraction: it is ready in milliseconds and
+        // is what makes YouTube work without Python.
+        newpipe.initialiseAsync(scope)
         yt.initAsync(scope)
     }
 
@@ -109,11 +114,15 @@ class LocalServer(
         val version = yt.version()
         val initError = yt.initializationError
         val ffmpegError = yt.ffmpegInitializationError
-        val ready = yt.isReady
+        val ytReady = yt.isReady
+        val npReady = newpipe.isReady
         val writable = config.downloadDir.isDirectory && config.downloadDir.canWrite()
+        // Search and info need one working engine, not both: NewPipeExtractor
+        // covers YouTube, yt-dlp covers everything else.
+        val canExtract = npReady || ytReady
         return HealthResponse(
-            // "ok" only when the engine can actually do the work, per API_SPEC.
-            status = if (ready && ffmpegBinary != null && writable) "ok" else "degraded",
+            // "ok" = an extraction engine plus ffmpeg and a writable directory.
+            status = if (canExtract && ffmpegBinary != null && writable) "ok" else "degraded",
             apiVersion = config.apiVersion,
             version = BuildConfig.VERSION_NAME,
             uptimeSeconds = uptimeSeconds(),
@@ -123,23 +132,46 @@ class LocalServer(
             downloadDir = config.downloadDir.absolutePath,
             downloadDirWritable = writable,
             ytDlp = ComponentStatus(
-                available = initError == null && (ready || version != null),
+                available = ytReady,
                 version = version,
                 note = when {
-                    initError != null -> "initialisation failed: $initError"
-                    !ready -> "initialising bundled Python/yt-dlp…"
-                    version == null -> "ready, but yt-dlp did not report a version"
-                    else -> "bundled"
+                    ytReady -> "bundled · fallback for non-YouTube sites"
+                    initError != null -> initError
+                    else -> "initialising: ${yt.step}"
+                },
+                state = when {
+                    ytReady -> "ready"
+                    initError != null -> "failed"
+                    else -> "initialising"
+                },
+            ),
+            newpipe = ComponentStatus(
+                available = npReady,
+                version = BuildConfig.NEWPIPE_VERSION,
+                note = when {
+                    npReady -> "primary YouTube engine · no Python required"
+                    newpipe.error != null -> newpipe.error
+                    else -> "starting"
+                },
+                state = when {
+                    npReady -> "ready"
+                    newpipe.error != null -> "failed"
+                    else -> "initialising"
                 },
             ),
             ffmpeg = ComponentStatus(
                 available = ffmpegBinary != null,
+                version = ffmpeg.version(),
                 path = ffmpegBinary?.name,
                 note = when {
-                    ffmpegError != null -> "initialisation failed: $ffmpegError"
+                    ffmpegError != null -> ffmpegError
                     ffmpegBinary != null -> "bundled"
-                    ready -> "init finished but no ffmpeg binary on disk"
-                    else -> "initialising bundled ffmpeg…"
+                    else -> "initialising: ${yt.step}"
+                },
+                state = when {
+                    ffmpegBinary != null -> "ready"
+                    ffmpegError != null -> "failed"
+                    else -> "initialising"
                 },
             ),
             ffprobe = ComponentStatus(available = ffprobeBinary != null, path = ffprobeBinary?.name),
@@ -150,9 +182,11 @@ class LocalServer(
             ),
             cookies = cookies.status(),
             features = mapOf(
-                "search" to ready,
-                "info" to ready,
-                "download" to ready,
+                "search" to canExtract,
+                "info" to canExtract,
+                "download" to canExtract,
+                "newpipe" to npReady,
+                "yt_dlp" to ytReady,
                 "sponsorblock" to true,
                 "subtitles" to true,
                 "playlist" to true,

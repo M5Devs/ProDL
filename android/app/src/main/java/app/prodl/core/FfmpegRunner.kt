@@ -28,6 +28,25 @@ class FfmpegRunner(context: Context) {
 
     fun probeBinary(): File? = resolve("ffprobe")
 
+    @Volatile
+    private var cachedVersion: String? = null
+
+    /** First line of `ffmpeg -version`, cached: the health check calls this often. */
+    fun version(): String? {
+        cachedVersion?.let { return it }
+        val file = binary() ?: return null
+        return synchronized(this) {
+            cachedVersion ?: runCatching {
+                val process = ProcessBuilder(file.absolutePath, "-version")
+                    .redirectErrorStream(true)
+                    .start()
+                val line = process.inputStream.bufferedReader().use { it.readLine() }
+                process.waitFor()
+                line?.trim()?.take(120)?.ifEmpty { null }
+            }.getOrNull()?.also { cachedVersion = it }
+        }
+    }
+
     private fun resolve(name: String): File? {
         val root = File(appContext.filesDir, "youtubedl-android")
         val packages = File(root, "packages/ffmpeg")
@@ -135,6 +154,45 @@ object FfmpegArgs {
         args += output.absolutePath
         return args
     }
+
+    /**
+     * Join a video-only and an audio-only stream without re-encoding. The
+     * container is chosen so the copied codecs stay legal (see [muxExtension]).
+     */
+    fun mux(video: File, audio: File, output: File): List<String> = listOf(
+        "-hide_banner",
+        "-y",
+        "-nostdin",
+        "-progress", "pipe:1",
+        "-nostats",
+        "-i", video.absolutePath,
+        "-i", audio.absolutePath,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c", "copy",
+        "-movflags", "+faststart",
+        output.absolutePath,
+    )
+
+    /**
+     * Container for a `-c copy` mux. MP4 only accepts a subset of codecs, MKV
+     * accepts everything, so anything that is not a known-good pair lands there
+     * instead of failing at the end of a long download.
+     */
+    fun muxExtension(videoExt: String, audioExt: String): String {
+        val video = videoExt.lowercase(Locale.US)
+        val audio = audioExt.lowercase(Locale.US)
+        val mp4Audio = setOf("m4a", "aac", "mp4")
+        return when {
+            video == "mp4" && audio in mp4Audio -> "mp4"
+            video == "webm" && audio in setOf("webm", "opus", "ogg") -> "webm"
+            video == "mp4" && audio == "opus" -> "mkv"
+            video == "webm" && audio in mp4Audio -> "mkv"
+            else -> "mkv"
+        }
+    }
+
+    fun isMp4Audio(ext: String): Boolean = ext.lowercase(Locale.US) in setOf("m4a", "aac", "mp4")
 
     fun outputName(input: File, format: String): String =
         "${input.nameWithoutExtension}.${format.lowercase()}"

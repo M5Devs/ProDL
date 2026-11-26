@@ -122,39 +122,75 @@
     if (kind) node.classList.add(kind);
   }
 
+  // "initialising" must never look like "failed": the phone unpacks its
+  // bundled engines on first launch and that takes a few seconds.
+  function engineLabel(component) {
+    if (!component) return 'missing';
+    if (component.state === 'initialising') return 'starting';
+    if (component.state === 'failed') return 'failed';
+    return component.available ? 'ready' : 'missing';
+  }
+
+  function engineClass(component) {
+    if (!component) return 'bad';
+    if (component.state === 'initialising') return 'warn';
+    return component.available ? 'ok' : 'bad';
+  }
+
+  function engineValue(component, fallback) {
+    if (!component || !component.available) return 'unavailable';
+    return shortVersion(component.version) || fallback;
+  }
+
   function refreshHealth() {
     var pill = $('healthPill');
     return api.health().then(function (health) {
       state.health = health;
+      var np = health.newpipe || null;
       var yt = health.yt_dlp || {};
       var ff = health.ffmpeg || {};
       var cookies = health.cookies || {};
       var features = health.features || {};
       var sponsorOk = features.sponsorblock !== false;
-      var ok = health.status === 'ok' && yt.available && ff.available;
+      var npReady = !!(np && np.available);
+      var ytReady = !!yt.available;
+      var canSearch = features.search !== false && (npReady || ytReady);
+      var ok = health.status === 'ok' && canSearch && ff.available;
+      var primary = npReady ? 'NewPipe' : 'yt-dlp';
 
-      pill.className = 'pill ' + (ok ? 'ok' : (yt.available ? 'warn' : 'bad'));
-      $('healthText').textContent = ok ? 'Ready' : yt.available ? 'No FFmpeg' : 'yt-dlp failed';
-      $('healthExtra').textContent = ' · yt-dlp ' + (yt.available ? '✓' : '✕') +
+      pill.className = 'pill ' + (ok ? 'ok' : (canSearch ? 'warn' : 'bad'));
+      $('healthText').textContent = ok ? 'Ready' : canSearch ? 'No FFmpeg' : 'engine not ready';
+      $('healthExtra').textContent = ' · ' + primary + (npReady || ytReady ? ' ✓' : ' ✕') +
         ' · FFmpeg ' + (ff.available ? '✓' : '✕');
       pill.title = [
         'ProDL ' + health.version + ' · ' + health.platform,
-        'yt-dlp: ' + (yt.available ? (yt.version || 'ready') : 'unavailable'),
+        (np ? 'NewPipe: ' + (np.available ? (np.version || 'ready') : (np.note || 'unavailable')) : null),
+        'yt-dlp: ' + (yt.available ? (yt.version || 'ready') : (yt.note || 'unavailable')),
         'FFmpeg: ' + (ff.available ? (ff.version || 'ready') : 'unavailable'),
         'SponsorBlock: ' + (sponsorOk ? 'available' : 'unavailable'),
         'Cookies: ' + (cookies.configured ? cookies.cookie_count + ' stored' : 'none')
-      ].join('\n');
+      ].filter(Boolean).join('\n');
 
-      $('engineStatus').textContent = ok ? 'all engines ready' : 'degraded';
+      $('engineStatus').textContent = ok ? 'all engines ready' : canSearch ? 'degraded' : 'engine not ready';
 
-      $('ytdlpState').textContent = yt.available ? 'ready' : 'failed';
-      setEngineState($('engineYtdlp'), yt.available ? 'ok' : 'bad');
-      $('ytdlpValue').textContent = yt.available ? (shortVersion(yt.version) || 'bundled') : 'unavailable';
+      var npCard = $('engineNewpipe');
+      npCard.hidden = !np;
+      if (np) {
+        $('newpipeState').textContent = engineLabel(np);
+        setEngineState(npCard, engineClass(np));
+        $('newpipeValue').textContent = engineValue(np, 'bundled');
+        $('newpipeValue').title = np.version || '';
+        $('newpipeNote').textContent = np.note || 'primary YouTube engine';
+      }
+
+      $('ytdlpState').textContent = engineLabel(yt);
+      setEngineState($('engineYtdlp'), engineClass(yt));
+      $('ytdlpValue').textContent = engineValue(yt, 'bundled');
       $('ytdlpValue').title = yt.version || '';
       $('ytdlpNote').textContent = yt.note || (yt.path ? 'path: ' + yt.path : 'no details reported');
 
-      $('ffmpegState').textContent = ff.available ? 'ready' : 'missing';
-      setEngineState($('engineFfmpeg'), ff.available ? 'ok' : 'bad');
+      $('ffmpegState').textContent = engineLabel(ff);
+      setEngineState($('engineFfmpeg'), engineClass(ff));
       $('ffmpegValue').textContent = ff.available ? (shortVersion(ff.version) || 'bundled') : 'unavailable';
       $('ffmpegValue').title = ff.version || '';
       $('ffmpegNote').textContent = ff.note || (ff.path ? 'path: ' + ff.path : 'conversion disabled without FFmpeg');
@@ -184,9 +220,10 @@
       $('healthExtra').textContent = '';
       pill.title = err.message;
       $('engineStatus').textContent = 'engine unreachable';
-      ['engineYtdlp', 'engineFfmpeg', 'engineSponsor', 'engineCookies'].forEach(function (id) {
+      ['engineNewpipe', 'engineYtdlp', 'engineFfmpeg', 'engineSponsor', 'engineCookies'].forEach(function (id) {
         setEngineState($(id), 'bad');
       });
+      $('newpipeValue').textContent = '—';
       $('ytdlpValue').textContent = '—';
       $('ffmpegValue').textContent = '—';
       $('sponsorValue').textContent = '—';

@@ -182,11 +182,16 @@ files and (b) tell the page where the API is.
 | --- | --- |
 | **Web** | Served by the backend, or any static host with `?api=https://your-server` |
 | **Desktop (Electron/Tauri)** | Ship `frontend/`, run the backend as a sidecar on `127.0.0.1:<free port>`, inject `window.__PRODL_API_BASE__` before the app scripts |
-| **Android** | `android/` builds self-contained per-ABI APKs (`arm64-v8a` ~68 MB, `armeabi-v7a` ~61 MB, plus x86/x86_64 for emulators): bundled CPython + yt-dlp + ffmpeg (no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
+| **Android** | `android/` builds self-contained per-ABI APKs (`arm64-v8a` ~69 MB, `armeabi-v7a` ~63 MB, plus x86/x86_64 for emulators): NewPipeExtractor for YouTube, bundled CPython + yt-dlp + ffmpeg for everything else (no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
 | **CLI / scripts** | Use the JSON API directly (see API_SPEC.md) |
 
 The Android target is a first-class build, not a wrapper around the Python
-backend: the phone is the server. It binds `127.0.0.1` only, keeps downloads
+backend: the phone is the server. It runs **two extraction engines** so a broken
+one cannot take the app down: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor)
+(GPL-3.0, pure Java, ready instantly) answers all YouTube search, metadata and
+download requests, and the bundled yt-dlp covers the 1000+ other sites plus acts
+as the YouTube fallback. Both are reported separately by `/api/health`, and
+`features.search` stays `true` as long as either one works. It binds `127.0.0.1` only, keeps downloads
 alive in a foreground service, plays streams natively (Media3 + Picture-in-Picture,
 SponsorBlock auto-skip), and has no Google Play Services, Firebase or ad SDK in
 its dependency graph. Each release ships one APK per architecture, so a phone

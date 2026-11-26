@@ -13,9 +13,11 @@ no Google Play Services / Firebase / ad SDK anywhere in the dependency graph.
 │       │                        ▼                                                 │
 │       │                     fetch/WebSocket ──► LocalServer (Ktor + CIO)         │
 │       │                                              │                           │
-│       │                                              ├── MediaService ─► YtDlp    │
-│       │                                              │        (bundled python + │
-│       │                                              │         yt-dlp + ffmpeg)  │
+│       │                                              ├── MediaService ─► NewPipe │
+│       │                                              │        │  (YouTube, pure  │
+│       │                                              │        │   Java, no Python)│
+│       │                                              │        └─► YtDlp (bundled  │
+│       │                                              │             python, yt-dlp│
 │       │                                              ├── CookieStore (private)   │
 │       │                                              └── SponsorBlockClient      │
 │       │                                                                          │
@@ -67,6 +69,47 @@ exact exception message for the health payload:
   otherwise `degraded` (per `API_SPEC.md`)
 - `FfmpegRunner` caches only successful lookups, so a binary that appears after
   the first launch is picked up by the next health check.
+
+## Two extraction engines
+
+YouTube and the rest of the web are extracted by different code, so one broken
+engine never takes the app down:
+
+| Engine | Serves | Cost at start-up |
+| --- | --- | --- |
+| **NewPipeExtractor** `v0.27.1` (GPL-3.0) | YouTube: search, `/api/info`, direct stream URLs, downloads | none — pure Java, ready in milliseconds |
+| **yt-dlp** (bundled CPython) | everything else: 1000+ sites, cookies, SponsorBlock cuts, subtitles, format merging | unpacks ~17 MB of Python on first launch |
+
+Routing lives in `MediaService` and is documented in `API_SPEC.md` §4:
+NewPipe answers YouTube requests first, yt-dlp answers everything else and
+serves as the YouTube fallback when YouTube changes something the pinned
+extractor version cannot parse. A `format_id` of `np:…` can only be served by
+NewPipe, any other selector only by yt-dlp.
+
+`/api/health` reports both engines separately (`newpipe`, `yt_dlp`) with a
+`state` of `initialising` / `ready` / `failed`, so the UI can show "starting…"
+while the payload unpacks instead of a false "failed". Search works as soon as
+`newpipe` is ready, even if yt-dlp never starts.
+
+The startup code is deliberately bounded: unpacking has a 180 s deadline and the
+interpreter probe (`yt-dlp --version`) has 30 s, and whatever fails is named in
+the health note (`unpacking the bundled Python failed: …`). With no deadline a
+stuck unpack previously left the card on "initialising" forever with no error to
+report.
+
+### Downloads without Python
+
+NewPipe streams are downloaded straight from `googlevideo.com` with OkHttp:
+
+- progressive (`np:muxed:`) streams are saved as-is (MP4/WebM);
+- video-only (`np:video:`) streams get the best matching audio track, joined by
+  `ffmpeg -c copy` into MP4, WebM or MKV (chosen from the codec pair, never a
+  re-encode);
+- audio-only downloads keep the original track when the container matches, else
+  FFmpeg extracts to MP3/M4A/Opus/FLAC/WAV.
+
+Progress maps both tracks into one percentage (video 0–70 %, audio 70–100 %)
+and then reports the mux, using the existing WebSocket/SSE pipeline.
 
 ## API parity with `API_SPEC.md`
 

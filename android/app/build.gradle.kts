@@ -9,6 +9,10 @@ plugins {
 
 // Release number; each APK gets `baseVersionCode * 10 + abiCode` so Play
 // Store / F-Droid see unique, ordered version codes per architecture.
+// Single source of truth for the extractor version: the dependency and the
+// value `/api/health` reports both come from here.
+val newPipeExtractorVersion = "v0.27.1"
+
 val baseVersionCode = 20000
 val abiVersionCodes = linkedMapOf(
     "arm64-v8a" to 1,
@@ -49,6 +53,7 @@ android {
         targetSdk = 36
         versionCode = baseVersionCode
         versionName = "2.0.0"
+        buildConfigField("String", "NEWPIPE_VERSION", "\"${newPipeExtractorVersion.removePrefix("v")}\"")
     }
 
     // One APK per CPU architecture: the bundled Python/yt-dlp/ffmpeg native
@@ -91,6 +96,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // NewPipeExtractor uses java.time / java.util.stream / NIO APIs that only
+        // exist on API 33+; desugar_jdk_libs_nio backports them to minSdk 26.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     packaging {
@@ -159,6 +167,7 @@ dependencies {
     val ktorVersion = "3.6.2"
     val media3Version = "1.11.1"
     val youtubedlVersion = "0.18.1"
+    val okhttpVersion = "4.12.0"
 
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.activity:activity-ktx:1.13.0")
@@ -183,6 +192,16 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 
+    // Primary YouTube engine: NewPipeExtractor (GPL-3.0). Pure Java, no native
+    // payload, no Python — it scrapes YouTube/PeerTube/SoundCloud directly.
+    implementation("com.github.teamnewpipe:NewPipeExtractor:$newPipeExtractorVersion")
+
+    // HTTP for NewPipeExtractor's Downloader and for saving direct media
+    // streams (the same OkHttp + UA setup LibreTube ships).
+    implementation("com.squareup.okhttp3:okhttp:$okhttpVersion")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
+
+    // Fallback engine for the 1000+ sites NewPipeExtractor does not cover:
     // yt-dlp + ffmpeg, bundled and executed on-device. aria2c is deliberately
     // left out: nothing passes `--external-downloader`, and it costs ~7 MB/ABI.
     implementation("io.github.junkfood02.youtubedl-android:library:$youtubedlVersion")

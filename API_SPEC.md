@@ -149,17 +149,68 @@ and client pre-flight checks.
 }
 ```
 
-`status` is `ok` when yt-dlp, ffmpeg and a writable download directory are all
-available; otherwise `degraded` (the `note` fields explain what to install).
-`features.<x>` is `false` when the capability cannot work on this host
-(e.g. `convert` without ffmpeg).
+`status` is `ok` when at least one extraction engine is ready, ffmpeg is
+available and the download directory is writable; otherwise `degraded` (the
+`note` fields say what is missing). `features.<x>` is `false` when the
+capability cannot work on this host (e.g. `convert` without ffmpeg).
+
+### Extractor components
+
+The reference backend reports one extraction engine. The Android app runs two
+and reports both, so an engine that is still unpacking never blocks the other:
+
+| Component | Present on | Meaning |
+| --- | --- | --- |
+| `yt_dlp` | all backends | yt-dlp (+ the bundled CPython on Android). Covers 1000+ sites, is the fallback for YouTube. |
+| `newpipe` | Android only | NewPipeExtractor (GPL-3.0), the primary YouTube engine: search, metadata, direct stream URLs. Pure Java, so it is ready in milliseconds. |
+| `ffmpeg` | all backends | Muxing, conversion, audio extraction. |
+| `ffprobe` / `js_runtime` | all backends | Media probing / JavaScript runtime for YouTube challenges. |
+
+Each component carries an optional `state` field: `initialising`, `ready` or
+`failed`. Clients must render `initialising` as in-progress, never as an error —
+the mobile app unpacks its bundled payload on first launch:
+
+```json
+"yt_dlp": {
+  "available": false,
+  "version": null,
+  "path": null,
+  "note": "initialising: unpacking Python",
+  "state": "initialising"
+},
+"newpipe": {
+  "available": true,
+  "version": "0.27.1",
+  "path": null,
+  "note": "primary YouTube engine · no Python required",
+  "state": "ready"
+}
+```
+
+`features.search`, `features.info` and `features.download` are `true` when
+**either** engine is ready. `features.newpipe` and `features.yt_dlp` report the
+individual engines.
+
+### Engine routing
+
+| Request | Engine |
+| --- | --- |
+| `GET /api/search` for any query | NewPipeExtractor when ready and it returns results, else yt-dlp |
+| `GET /api/info` for a YouTube URL | NewPipeExtractor when ready, else yt-dlp |
+| `GET /api/info` for any other URL | yt-dlp |
+| `POST /api/download` with `format_id` `np:…` or omitted (YouTube URL) | NewPipeExtractor |
+| `POST /api/download` with any other `format_id` | yt-dlp |
+
+A yt-dlp failure never hides a working NewPipeExtractor and vice versa, so a
+broken Python payload on a phone only costs non-YouTube support.
 
 ---
 
 ## 5. `GET /api/search`
 
-Search videos without a YouTube Data API key. Backed by yt-dlp's `ytsearch`
-(InnerTube); pasting a URL returns that single item.
+Search videos without a YouTube Data API key. Backed by NewPipeExtractor's
+YouTube search on Android and yt-dlp's `ytsearch` (InnerTube) everywhere else;
+pasting a URL returns that single item.
 
 **Query parameters**
 
@@ -310,7 +361,7 @@ Queue a download. Returns immediately with a task handle.
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `url` | string | — | **Required**, min length 4 |
-| `format_id` | string | `null` | Exact yt-dlp selector from `/api/info` (e.g. `"137+140"`, `"best"`) |
+| `format_id` | string | `null` | Exact `format_id` from `/api/info`: a yt-dlp selector (`"137+140"`, `"best"`) or a NewPipe id (`"np:video:137"`, `"np:muxed:18"`, `"np:audio-best"`). `np:` ids are served by NewPipeExtractor |
 | `video_quality` | string | `null` | Target height, `"1080p"` / `"720"`; ignored when `format_id` is set |
 | `audio_only` | bool | `false` | Extract audio and post-process with FFmpeg |
 | `audio_format` | enum | `"mp3"` | `mp3` \| `m4a` \| `opus` \| `flac` \| `wav` |
@@ -330,6 +381,27 @@ Queue a download. Returns immediately with a task handle.
 
 Format selection precedence: `audio_only` → `bestaudio/best`; else `format_id`;
 else `video_quality`; else `bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`.
+
+### NewPipe downloads (Android)
+
+When the URL is YouTube and `format_id` is `np:…` or absent, the task is served
+from the extractor's **direct stream URLs** instead of yt-dlp:
+
+1. `/api/info` caches the resolved streams for ~10 minutes, so the download that
+   follows does not scrape the page again.
+2. A `np:muxed:` stream is a progressive MP4/WebM file: downloaded as-is.
+3. A `np:video:` stream is video-only, so the best matching audio track is
+   fetched too and joined with `ffmpeg -c copy`. The container is MP4 (AAC
+   audio), WebM (Opus) or MKV when the pair cannot live in MP4 — never a
+   re-encode.
+4. `np:audio-best` / `audio_only` keeps the original track when the container
+   already matches `audio_format`, otherwise FFmpeg extracts it.
+
+`progress.percent` covers the whole task: a muxed download maps video to
+0–70 % and audio to 70–100 %, then `postprocessing` reports the mux itself.
+NewPipe downloads ignore `subtitles`, `thumbnail`, `sponsorblock_action` (cut)
+and `use_cookies`: the extractor has no cookie jar and does not rewrite files.
+Those options still apply to yt-dlp-served downloads.
 
 **Response `202 Accepted`**
 

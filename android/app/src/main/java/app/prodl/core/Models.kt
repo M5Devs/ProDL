@@ -18,12 +18,17 @@ enum class TaskStatus {
         get() = this == FINISHED || this == ERROR || this == CANCELED
 }
 
+/**
+ * Engine or tool state. `state` is additive over API_SPEC v1.0.0 so a client can
+ * tell "still unpacking" apart from "broken" without parsing `note`.
+ */
 @Serializable
 data class ComponentStatus(
     val available: Boolean,
     val version: String? = null,
     val path: String? = null,
     val note: String? = null,
+    val state: String? = null,
 )
 
 @Serializable
@@ -46,6 +51,8 @@ data class HealthResponse(
     @SerialName("download_dir") val downloadDir: String,
     @SerialName("download_dir_writable") val downloadDirWritable: Boolean,
     @SerialName("yt_dlp") val ytDlp: ComponentStatus,
+    /** NewPipeExtractor (Android only): the primary YouTube engine. */
+    val newpipe: ComponentStatus? = null,
     val ffmpeg: ComponentStatus,
     val ffprobe: ComponentStatus,
     @SerialName("js_runtime") val jsRuntime: ComponentStatus,
