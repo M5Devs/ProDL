@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Initialisation extracts the bundled Python/ffmpeg binaries on first launch,
  * so it runs once off the main thread and every caller awaits [awaitReady].
  */
-class YtDlp(private val context: Context) {
+class YtDlp(context: Context) {
+    // Always the application context: init outlives the Activity that started
+    // it and may run again after a configuration change.
+    private val appContext: Context = context.applicationContext ?: context
+
     private val ready = CompletableDeferred<Unit>()
     private val initStarted = AtomicBoolean(false)
 
@@ -28,22 +32,46 @@ class YtDlp(private val context: Context) {
     private var initError: String? = null
 
     @Volatile
+    private var initDone = false
+
+    @Volatile
     private var cachedVersion: String? = null
+
+    @Volatile
+    private var ffmpegError: String? = null
 
     @Volatile
     var ffmpegPath: String? = null
         private set
 
+    /** yt-dlp/Python failure, if any — surfaced by `/api/health`. */
     val initializationError: String? get() = initError
+
+    /** FFmpeg failure, if any. Downloads still work without it. */
+    val ffmpegInitializationError: String? get() = ffmpegError
+
+    val isReady: Boolean get() = initDone && initError == null
 
     fun initAsync(scope: CoroutineScope) {
         if (!initStarted.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
+            // FFmpeg is optional: a broken binary must not take search/download
+            // down with it, so it fails in its own try block.
             try {
-                FFmpeg.getInstance().init(context)
-                ffmpegPath = FfmpegRunner(context).binary()?.absolutePath
-                YoutubeDL.getInstance().init(context)
-                cachedVersion = runCatching { YoutubeDL.getInstance().version(context) }.getOrNull()
+                FFmpeg.getInstance().init(appContext)
+                ffmpegPath = FfmpegRunner(appContext).binary()?.absolutePath
+                ffmpegError = null
+                Log.i(TAG, "ffmpeg ready: ${ffmpegPath ?: "binary not found yet"}")
+            } catch (t: Throwable) {
+                ffmpegError = t.message ?: t::class.java.simpleName
+                Log.e(TAG, "ffmpeg init failed", t)
+            }
+
+            try {
+                YoutubeDL.getInstance().init(appContext)
+                cachedVersion = runCatching { YoutubeDL.getInstance().version(appContext) }.getOrNull()
+                initDone = true
+                initError = null
                 Log.i(TAG, "yt-dlp ready: ${cachedVersion ?: "unknown version"}")
                 ready.complete(Unit)
             } catch (t: Throwable) {
@@ -101,7 +129,7 @@ class YtDlp(private val context: Context) {
         runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }.getOrDefault(false)
 
     fun updateBinary(): Boolean = runCatching {
-        YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE)
+        YoutubeDL.getInstance().updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)
         true
     }.getOrDefault(false)
 

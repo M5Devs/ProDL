@@ -108,8 +108,12 @@ class LocalServer(
         val ffprobeBinary = ffmpeg.probeBinary()
         val version = yt.version()
         val initError = yt.initializationError
+        val ffmpegError = yt.ffmpegInitializationError
+        val ready = yt.isReady
+        val writable = config.downloadDir.isDirectory && config.downloadDir.canWrite()
         return HealthResponse(
-            status = "ok",
+            // "ok" only when the engine can actually do the work, per API_SPEC.
+            status = if (ready && ffmpegBinary != null && writable) "ok" else "degraded",
             apiVersion = config.apiVersion,
             version = BuildConfig.VERSION_NAME,
             uptimeSeconds = uptimeSeconds(),
@@ -117,17 +121,26 @@ class LocalServer(
             python = "n/a (kotlin ${KotlinVersion.CURRENT})",
             dataDir = config.dataDir.absolutePath,
             downloadDir = config.downloadDir.absolutePath,
-            downloadDirWritable = config.downloadDir.isDirectory && config.downloadDir.canWrite(),
+            downloadDirWritable = writable,
             ytDlp = ComponentStatus(
-                available = version != null,
+                available = initError == null && (ready || version != null),
                 version = version,
-                note = initError?.let { "initialisation failed: $it" }
-                    ?: if (version == null) "extracting bundled binaries…" else "bundled",
+                note = when {
+                    initError != null -> "initialisation failed: $initError"
+                    !ready -> "initialising bundled Python/yt-dlp…"
+                    version == null -> "ready, but yt-dlp did not report a version"
+                    else -> "bundled"
+                },
             ),
             ffmpeg = ComponentStatus(
                 available = ffmpegBinary != null,
                 path = ffmpegBinary?.name,
-                note = if (ffmpegBinary == null) "bundled ffmpeg not extracted yet" else "bundled",
+                note = when {
+                    ffmpegError != null -> "initialisation failed: $ffmpegError"
+                    ffmpegBinary != null -> "bundled"
+                    ready -> "init finished but no ffmpeg binary on disk"
+                    else -> "initialising bundled ffmpeg…"
+                },
             ),
             ffprobe = ComponentStatus(available = ffprobeBinary != null, path = ffprobeBinary?.name),
             jsRuntime = ComponentStatus(
@@ -137,6 +150,9 @@ class LocalServer(
             ),
             cookies = cookies.status(),
             features = mapOf(
+                "search" to ready,
+                "info" to ready,
+                "download" to ready,
                 "sponsorblock" to true,
                 "subtitles" to true,
                 "playlist" to true,

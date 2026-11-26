@@ -94,6 +94,14 @@ android {
     }
 
     packaging {
+        // youtubedl-android ships its payload as `libpython.zip.so` /
+        // `libffmpeg.zip.so`. With the default (aligned, uncompressed) packaging
+        // the library cannot find a runnable binary on real devices, so yt-dlp
+        // init fails and /api/health reports no ffmpeg. Legacy packaging copies
+        // them into nativeLibraryDir, where the library extracts and exec's them.
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources.excludes += setOf(
             "META-INF/DEPENDENCIES",
             "META-INF/LICENSE",

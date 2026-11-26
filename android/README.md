@@ -41,6 +41,33 @@ no Google Play Services / Firebase / ad SDK anywhere in the dependency graph.
 into the APK at build time. Nothing is duplicated into version control, so the
 HTML/CSS/JS can never drift between web, desktop and Android.
 
+### Why the binaries are packaged "the old way"
+
+youtubedl-android ships its payload as `libpython.zip.so` / `libffmpeg.zip.so`
+and unpacks them on first launch. That only works when the `.so` files are
+extracted to `nativeLibraryDir` at install time, so the build sets both:
+
+```kotlin
+packaging { jniLibs { useLegacyPackaging = true } }   // compress + extract
+android:extractNativeLibs="true"                      // in <application>
+```
+
+With the modern (aligned, uncompressed) default the library cannot find a
+runnable interpreter, `YoutubeDL.init()` throws, and `/api/health` reports
+`yt-dlp failed` / `no ffmpeg` with `features.convert: false` — search and
+download are dead even though the APK looks fine.
+
+`YtDlp.initAsync()` initialises FFmpeg and yt-dlp in separate `try` blocks with
+`applicationContext`, is idempotent across Activity re-creation, and stores the
+exact exception message for the health payload:
+
+- `yt_dlp.note` → `initialisation failed: <exception>` (search/download broken)
+- `ffmpeg.note` → `initialisation failed: <exception>` (conversion disabled)
+- `status` is `ok` only when both engines and the download dir are ready,
+  otherwise `degraded` (per `API_SPEC.md`)
+- `FfmpegRunner` caches only successful lookups, so a binary that appears after
+  the first launch is picked up by the next health check.
+
 ## API parity with `API_SPEC.md`
 
 The Android build serves the same paths as the Python backend, so the SPA needs

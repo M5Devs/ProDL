@@ -10,40 +10,45 @@ import java.util.Locale
  * Locates and runs the ffmpeg binary that youtubedl-android extracts into the
  * app sandbox, and builds the argument lists for conversions.
  */
-class FfmpegRunner(private val context: Context) {
+class FfmpegRunner(context: Context) {
+
+    private val appContext: Context = context.applicationContext ?: context
 
     @Volatile
     private var cached: File? = null
 
-    @Volatile
-    private var resolved = false
-
+    /** Caches hits only: on first launch the binary appears after extraction. */
     fun binary(): File? {
-        if (resolved) return cached
-        synchronized(this) {
-            if (!resolved) {
-                cached = resolve("ffmpeg")
-                resolved = true
-            }
-            return cached
+        cached?.let { if (it.isFile) return it }
+        return synchronized(this) {
+            if (cached?.isFile != true) cached = resolve("ffmpeg")
+            cached
         }
     }
 
     fun probeBinary(): File? = resolve("ffprobe")
 
     private fun resolve(name: String): File? {
-        val packages = File(context.filesDir, "youtubedl-android/packages/ffmpeg")
-        val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+        val root = File(appContext.filesDir, "youtubedl-android")
+        val packages = File(root, "packages/ffmpeg")
+        val nativeDir = File(appContext.applicationInfo.nativeLibraryDir)
 
         val candidates = mutableListOf<File>()
         candidates += File(packages, name)
-        packages.listFiles()?.sortedBy { it.name }?.forEach { entry ->
+        // FFmpeg.init() unpacks libffmpeg.zip.so into packages/ffmpeg/<version>/.
+        packages.listFiles()?.sortedByDescending { it.name }?.forEach { entry ->
             if (entry.isFile && entry.name.startsWith(name)) candidates += entry
+        }
+        if (packages.isDirectory) {
+            packages.walkTopDown().maxDepth(2)
+                .filter { it.isFile && it.name == name }
+                .forEach { candidates += it }
         }
         candidates += File(nativeDir, "lib$name.so")
         candidates += File(nativeDir, name)
+        candidates += File(root, name)
 
-        val existing = candidates.firstOrNull { it.isFile }
+        val existing = candidates.firstOrNull { it.isFile && it.length() > 0 }
         existing?.let { file ->
             if (!file.canExecute()) runCatching { file.setExecutable(true) }
         }
