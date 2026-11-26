@@ -64,7 +64,7 @@ jobs:
           docker rm -f prodl
 
   android:
-    name: Android shell (unit tests + debug APK)
+    name: Android shell (unit tests + per-ABI APKs)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -88,12 +88,13 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
 
-      - name: Verify the APK ships the shared SPA
+      - name: Verify split APKs (per ABI assets, libs, versionCode)
         run: |
           python3 - <<'PY'
-          import glob, sys, zipfile
-          apk = glob.glob("app/build/outputs/apk/debug/*.apk")[0]
-          names = zipfile.ZipFile(apk).namelist()
+          import json, os, sys, zipfile
+
+          # abi -> expected versionCode (baseVersionCode * 10 + abiCode)
+          expected = {"arm64-v8a": 200001, "armeabi-v7a": 200002, "x86_64": 200003, "x86": 200004}
           required = [
               "assets/frontend/index.html",
               "assets/frontend/js/api.js",
@@ -101,17 +102,62 @@ jobs:
               "assets/frontend/js/config.js",
               "assets/frontend/css/styles.css",
           ]
-          missing = [p for p in required if p not in names]
-          if missing:
-              sys.exit(f"APK is missing shared frontend assets: {missing}")
-          print(f"{apk}: {len(names)} entries, shared SPA present")
+          out = "app/build/outputs/apk/debug"
+          codes = {}
+          with open(os.path.join(out, "output-metadata.json")) as fh:
+              for element in json.load(fh)["elements"]:
+                  filters = element.get("filters") or []
+                  if filters and filters[0]["filterType"] == "ABI":
+                      codes[filters[0]["value"]] = element["versionCode"]
+
+          problems = []
+          for abi, version_code in expected.items():
+              apk = os.path.join(out, f"app-{abi}-debug.apk")
+              if not os.path.isfile(apk):
+                  problems.append(f"{abi}: missing {apk}")
+                  continue
+              names = zipfile.ZipFile(apk).namelist()
+              missing = [p for p in required if p not in names]
+              if missing:
+                  problems.append(f"{abi}: missing shared frontend assets {missing}")
+              libs = sorted({n.split("/")[1] for n in names if n.startswith("lib/")})
+              if libs != [abi]:
+                  problems.append(f"{abi}: native libs are {libs}, expected only [{abi}]")
+              if codes.get(abi) != version_code:
+                  problems.append(f"{abi}: versionCode {codes.get(abi)} != {version_code}")
+              print(f"{os.path.basename(apk)}: {os.path.getsize(apk) / 1e6:.1f} MB, "
+                    f"libs={libs}, versionCode={codes.get(abi)}, SPA present={not missing}")
+
+          if problems:
+              sys.exit("split APK problems:\n" + "\n".join(problems))
           PY
 
-      - name: Upload debug APK
+      - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v4
         with:
-          name: prodl-android-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: prodl-android-arm64-v8a
+          path: android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+          if-no-files-found: error
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prodl-android-armeabi-v7a
+          path: android/app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
+          if-no-files-found: error
+
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prodl-android-x86_64
+          path: android/app/build/outputs/apk/debug/app-x86_64-debug.apk
+          if-no-files-found: error
+
+      - name: Upload x86 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prodl-android-x86
+          path: android/app/build/outputs/apk/debug/app-x86-debug.apk
           if-no-files-found: error
 
       - name: Upload test report

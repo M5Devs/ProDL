@@ -2,7 +2,6 @@ package app.prodl.core
 
 import android.content.Context
 import android.util.Log
-import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -16,7 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Thin coroutine wrapper around youtubedl-android (yt-dlp + ffmpeg + aria2c).
+ * Thin coroutine wrapper around youtubedl-android (yt-dlp + ffmpeg).
  *
  * Initialisation extracts the bundled Python/ffmpeg binaries on first launch,
  * so it runs once off the main thread and every caller awaits [awaitReady].
@@ -43,7 +42,6 @@ class YtDlp(private val context: Context) {
             try {
                 FFmpeg.getInstance().init(context)
                 ffmpegPath = FfmpegRunner(context).binary()?.absolutePath
-                Aria2c.getInstance().init(context)
                 YoutubeDL.getInstance().init(context)
                 cachedVersion = runCatching { YoutubeDL.getInstance().version(context) }.getOrNull()
                 Log.i(TAG, "yt-dlp ready: ${cachedVersion ?: "unknown version"}")

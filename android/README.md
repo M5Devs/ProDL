@@ -87,13 +87,37 @@ export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
 cd android
 ./gradlew :app:testDebugUnitTest   # 39 JVM tests
-./gradlew :app:assembleDebug       # -> app/build/outputs/apk/debug/app-debug.apk (~186 MB)
+./gradlew :app:lintDebug
+./gradlew :app:assembleDebug       # -> one APK per CPU architecture
 ```
 
-The APK is large because it is self-contained: bundled Python, yt-dlp, ffmpeg
-and aria2c for `arm64-v8a`, `armeabi-v7a` and `x86_64`. Drop ABIs in
-`defaultConfig.ndk.abiFilters` to shrink it. Minification is opt-in:
+`assembleDebug` produces four split APKs instead of one fat 217 MB APK:
+
+| APK | Size (debug) | Install if… |
+| --- | --- | --- |
+| `app-arm64-v8a-debug.apk` | ~68 MB | **Almost all modern phones** (64-bit ARM, Android 8+) |
+| `app-armeabi-v7a-debug.apk` | ~61 MB | Older/cheap 32-bit phones |
+| `app-x86_64-debug.apk` | ~71 MB | Standard emulator (`x86_64` system image) |
+| `app-x86-debug.apk` | ~67 MB | Legacy 32-bit emulators, Chromebooks with 32-bit images |
+
+Install the one that matches your device:
+`adb install app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`. Picking the
+wrong one fails at install with `INSTALL_FAILED_NO_MATCHING_ABIS`.
+Not sure which you need? `adb shell getprop ro.product.cpu.abi` prints it.
+
+Each APK carries exactly one `lib/<abi>/` tree and gets its own version code,
+`baseVersionCode * 10 + abiCode` (`200001` arm64, `200002` armv7, `200003`
+x86_64, `200004` x86) so stores and `adb` treat them as distinct builds. Bump
+`baseVersionCode` in `app/build.gradle.kts` once per release.
+
+The APKs are still ~60–70 MB because they are self-contained: bundled CPython
+(~14 MB), ffmpeg (~36 MB) and yt-dlp per architecture. `-PprodlUniversal` builds
+the single fat APK as well; minification is opt-in:
 `PRODL_MINIFY=1 ./gradlew :app:assembleRelease`.
+
+CI uploads each architecture as its own artifact (`prodl-android-arm64-v8a`,
+`prodl-android-armeabi-v7a`, `prodl-android-x86_64`, `prodl-android-x86`) so you
+can download just the APK for your device from the Actions run.
 
 ## Tests
 
@@ -135,4 +159,3 @@ attribution for the bundled binaries lives in [NOTICE.md](NOTICE.md).
 - YouTube sometimes demands a signed-in session ("Sign in to confirm you're not a bot"); the in-app **Link YouTube account** flow fixes that with cookies.
 - A single foreground notification covers the server; per-task notifications are not implemented (progress is in the UI and over the API).
 - Playlists are supported by yt-dlp but the SPA only exposes single-video flows today.
-- `x86` (32-bit emulators) is not shipped.

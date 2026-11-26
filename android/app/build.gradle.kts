@@ -1,3 +1,4 @@
+import com.android.build.api.variant.FilterConfiguration
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -5,6 +6,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+// Release number; each APK gets `baseVersionCode * 10 + abiCode` so Play
+// Store / F-Droid see unique, ordered version codes per architecture.
+val baseVersionCode = 20000
+val abiVersionCodes = linkedMapOf(
+    "arm64-v8a" to 1,
+    "armeabi-v7a" to 2,
+    "x86_64" to 3,
+    "x86" to 4,
+)
 
 // ---------------------------------------------------------------------------
 // Shared UI: the APK ships the exact same SPA as the web build.  Nothing is
@@ -36,12 +47,21 @@ android {
         applicationId = "app.prodl"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20000
+        versionCode = baseVersionCode
         versionName = "2.0.0"
+    }
 
-        // yt-dlp/ffmpeg binaries are shipped per ABI; x86 (32-bit) is dropped.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    // One APK per CPU architecture: the bundled Python/yt-dlp/ffmpeg native
+    // libraries are the bulk of the install, so a fat APK wastes ~130 MB.
+    // `-PprodlUniversal` additionally builds the fat APK.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            // Literals (not abiVersionCodes.keys) so lint can see ABI coverage; the
+            // two lists must stay identical — a mismatch fails the build below.
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = providers.gradleProperty("prodlUniversal").isPresent
         }
     }
 
@@ -95,6 +115,24 @@ android {
     }
 }
 
+// Every split APK needs its own versionCode, otherwise stores/`adb install`
+// treat them as the same build. `base * 10 + abiCode` keeps ordering by release.
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            // The universal APK (`-PprodlUniversal`) has no ABI filter; it keeps
+            // the base versionCode.
+            val abi = output.filters
+                .firstOrNull { it.filterType == FilterConfiguration.FilterType.ABI }
+                ?.identifier
+                ?: return@forEach
+            val abiCode = abiVersionCodes[abi]
+                ?: error("No versionCode offset for ABI '$abi'; update abiVersionCodes")
+            output.versionCode?.set(baseVersionCode * 10 + abiCode)
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
@@ -137,10 +175,10 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 
-    // yt-dlp + ffmpeg + aria2c, bundled and executed on-device.
+    // yt-dlp + ffmpeg, bundled and executed on-device. aria2c is deliberately
+    // left out: nothing passes `--external-downloader`, and it costs ~7 MB/ABI.
     implementation("io.github.junkfood02.youtubedl-android:library:$youtubedlVersion")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:$youtubedlVersion")
-    implementation("io.github.junkfood02.youtubedl-android:aria2c:$youtubedlVersion")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")

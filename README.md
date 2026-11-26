@@ -182,14 +182,16 @@ files and (b) tell the page where the API is.
 | --- | --- |
 | **Web** | Served by the backend, or any static host with `?api=https://your-server` |
 | **Desktop (Electron/Tauri)** | Ship `frontend/`, run the backend as a sidecar on `127.0.0.1:<free port>`, inject `window.__PRODL_API_BASE__` before the app scripts |
-| **Android** | `android/` builds a self-contained APK: bundled yt-dlp + ffmpeg (no Python server, no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
+| **Android** | `android/` builds self-contained per-ABI APKs (`arm64-v8a` ~68 MB, `armeabi-v7a` ~61 MB, plus x86/x86_64 for emulators): bundled CPython + yt-dlp + ffmpeg (no PC), the SPA from `frontend/` synced into assets, and a Kotlin/Ktor implementation of the same API — see [android/README.md](android/README.md) |
 | **CLI / scripts** | Use the JSON API directly (see API_SPEC.md) |
 
 The Android target is a first-class build, not a wrapper around the Python
 backend: the phone is the server. It binds `127.0.0.1` only, keeps downloads
 alive in a foreground service, plays streams natively (Media3 + Picture-in-Picture,
 SponsorBlock auto-skip), and has no Google Play Services, Firebase or ad SDK in
-its dependency graph.
+its dependency graph. Each release ships one APK per architecture, so a phone
+downloads ~60–70 MB instead of the 217 MB fat build; CI publishes them as
+separate artifacts.
 
 Resolution order for the API base URL:
 `?api=` → `localStorage` → `window.__PRODL_API_BASE__` → `window.PRODL_CONFIG.apiBaseUrl`
