@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node (none required, but keep stray tooling out)
+node_modules/
+
+# Local runtime data: downloads, uploads, cookie store
+data/
+downloads/
+uploads/
+cookies.txt
+*.cookies.txt
+.prodl/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Agent-local state (project memory, scratch)
+.openhands/

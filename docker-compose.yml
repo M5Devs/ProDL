@@ -1,20 +1,25 @@
-version: '3.9'
-
+# One service: the backend serves the API *and* the static SPA, so there is no
+# cross-origin setup to maintain. Point a desktop/Android WebView at the same
+# origin, or serve ./frontend separately with ?api=http://<host>:<port>.
 services:
-  backend:
-    build: ./apps/backend
+  prodl:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: prodl:latest
     ports:
-      - "8000:8000"
+      - "${PRODL_PUBLISH_PORT:-8000}:8000"
+    environment:
+      # "*" keeps the SPA usable from file:// WebViews; set an explicit list
+      # (e.g. "http://localhost:3000") to lock the API down.
+      PRODL_CORS_ORIGINS: "${PRODL_CORS_ORIGINS:-*}"
+      PRODL_SERVE_FRONTEND: "1"
+      PRODL_MAX_WORKERS: "${PRODL_MAX_WORKERS:-4}"
+      # Opt-in yt-dlp remote components (downloads code, off by default):
+      # PRODL_YTDLP_REMOTE_COMPONENTS: "ejs:github"
     volumes:
-      - /tmp/prodl_downloads:/tmp/prodl_downloads
+      - prodl-data:/data
     restart: unless-stopped
 
-  frontend:
-    image: nginx:alpine
-    ports:
-      - "3000:80"
-    volumes:
-      - ./apps/frontend:/usr/share/nginx/html:ro
-    depends_on:
-      - backend
-    restart: unless-stopped
+volumes:
+  prodl-data:

@@ -128,3 +128,37 @@ async def test_download_mock(tmp_path):
         called_opts = MockYDL.call_args[0][0]
         assert called_opts.get("progress_hooks") == [my_hook]
         assert called_opts.get("max_filesize") == "50M"
+
+
+@pytest.mark.asyncio
+async def test_get_info_synthesises_format_for_direct_links():
+    """Generic direct media URLs expose a single top-level format, not a list."""
+    mock_info = {
+        "id": "clip",
+        "title": "clip",
+        "ext": "mp4",
+        "url": "https://cdn.example.com/clip.mp4",
+        "vcodec": "avc1.4d401e",
+        "acodec": "none",
+        "width": 640,
+        "height": 360,
+        "duration": 10,
+        "filesize": 991017,
+        "webpage_url": "https://cdn.example.com/clip.mp4",
+        "extractor": "generic",
+    }
+
+    with patch("yt_dlp.YoutubeDL") as MockYDL:
+        instance = MockYDL.return_value.__enter__.return_value
+        instance.extract_info.return_value = mock_info
+
+        info = await ProDLDownloader.get_info("https://cdn.example.com/clip.mp4")
+
+    assert len(info.formats) == 1
+    fmt = info.formats[0]
+    assert fmt.format_id == "best"
+    assert fmt.has_video is True
+    assert fmt.has_audio is False
+    assert fmt.resolution == "640x360"
+    assert fmt.direct_url == "https://cdn.example.com/clip.mp4"
+    assert info.best_video_url == "https://cdn.example.com/clip.mp4"

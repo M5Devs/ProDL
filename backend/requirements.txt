@@ -1,0 +1,10 @@
+# ProDL backend runtime dependencies.
+# The shared library in packages/prodl-core is installed separately
+# (Dockerfile: `pip install ./packages/prodl-core`,
+#  local dev:  `pip install -e ./packages/prodl-core`).
+# `websockets` arrives with uvicorn[standard] and powers the progress WebSocket.
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+yt-dlp>=2025.11.18
+httpx>=0.27
+python-multipart>=0.0.9

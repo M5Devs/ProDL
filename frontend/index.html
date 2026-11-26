@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="referrer" content="no-referrer" />
+  <title>ProDL — Download Anything</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="ProDL home">
+      <span class="logo" aria-hidden="true">▶</span>
+      <span class="brand-text">
+        <strong>ProDL</strong>
+        <small>download anything</small>
+      </span>
+    </a>
+    <div class="topbar-actions">
+      <button id="healthPill" class="pill" type="button" title="Server status">
+        <span class="dot" aria-hidden="true"></span><span id="healthText">checking…</span>
+      </button>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5m7.43-2.53a7.6 7.6 0 0 0 .07-.97 7.6 7.6 0 0 0-.07-.97l2.11-1.63a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65a7.3 7.3 0 0 0-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.57 11a7.6 7.6 0 0 0 0 1.94l-2.11 1.63a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1a7.3 7.3 0 0 0 1.69.98l.38 2.65A.49.49 0 0 0 10 22h4a.49.49 0 0 0 .49-.42l.38-2.65a7.3 7.3 0 0 0 1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" role="tablist" aria-label="Mode">
+      <button class="tab active" id="tabBtnDownload" data-tab="download" role="tab" aria-selected="true" aria-controls="tab-download">Download</button>
+      <button class="tab" id="tabBtnConvert" data-tab="convert" role="tab" aria-selected="false" aria-controls="tab-convert">Convert</button>
+    </nav>
+
+    <!-- ── Download ─────────────────────────────────────────────────────── -->
+    <section class="tab-panel active" id="tab-download" role="tabpanel" aria-labelledby="tabBtnDownload">
+      <form class="search-row" id="searchForm" autocomplete="off">
+        <input id="searchInput" type="search" placeholder="Search videos — no API key required" aria-label="Search videos" />
+        <button class="btn" type="submit" id="searchBtn">Search</button>
+      </form>
+
+      <div class="results" id="searchResults" hidden></div>
+
+      <form class="card url-row" id="urlForm" autocomplete="off">
+        <input id="urlInput" type="url" placeholder="…or paste a video URL" aria-label="Video URL" />
+        <button class="btn primary" type="submit" id="fetchBtn">Fetch</button>
+      </form>
+
+      <div class="loader" id="loader" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="loaderText">Fetching info…</span>
+      </div>
+
+      <div class="alert error" id="errorBox" role="alert" hidden></div>
+
+      <article class="card result" id="resultCard" hidden>
+        <div class="meta">
+          <img class="thumb" id="thumb" alt="" referrerpolicy="no-referrer" />
+          <div class="meta-text">
+            <h2 id="videoTitle">Untitled</h2>
+            <div class="badges" id="videoBadges"></div>
+          </div>
+        </div>
+
+        <div id="sponsorNote" class="alert info" hidden></div>
+
+        <div id="videoSection">
+          <p class="section-label">Video quality</p>
+          <div class="format-grid" id="formatGrid"></div>
+        </div>
+
+        <div id="audioSection">
+          <p class="section-label">Audio only</p>
+          <button class="option-btn" id="audioBtn" type="button">
+            <span class="option-icon" aria-hidden="true">♪</span>
+            <span>
+              <strong>Best quality audio</strong>
+              <small id="audioHint">MP3 · 192 kbps</small>
+            </span>
+          </button>
+        </div>
+
+        <details class="advanced">
+          <summary>Options</summary>
+          <div class="advanced-body">
+            <label class="field">
+              <span>Audio format</span>
+              <select id="audioFormat">
+                <option value="mp3">MP3</option>
+                <option value="m4a">M4A (AAC)</option>
+                <option value="opus">Opus</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="optSubtitles" /> Download subtitles</label>
+            <label class="check"><input type="checkbox" id="optEmbedSubs" /> Embed subtitles in file</label>
+            <label class="check"><input type="checkbox" id="optSponsorBlock" checked /> Cut SponsorBlock segments</label>
+            <label class="check"><input type="checkbox" id="optThumbnail" /> Embed thumbnail</label>
+            <label class="check"><input type="checkbox" id="optCookies" checked /> Use saved cookies</label>
+          </div>
+        </details>
+
+        <button class="btn primary block" id="downloadBtn" type="button" disabled>Download</button>
+      </article>
+
+      <section class="card progress" id="progressPanel" hidden>
+        <div class="progress-head">
+          <strong id="progressTitle">Working…</strong>
+          <span class="progress-percent" id="progressPercent">0%</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-meta" id="progressMeta"></div>
+        <div class="progress-actions" id="progressActions" hidden>
+          <a class="btn primary" id="saveLink" download>Save file</a>
+          <button class="btn ghost" id="progressClose" type="button">Close</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- ── Convert ──────────────────────────────────────────────────────── -->
+    <section class="tab-panel" id="tab-convert" role="tabpanel" aria-labelledby="tabBtnConvert">
+      <div class="card">
+        <p class="section-label">Convert / trim a local file</p>
+        <label class="dropzone" id="dropzone" for="convertFile">
+          <input id="convertFile" type="file" accept="audio/*,video/*" hidden />
+          <span class="dropzone-title" id="dropzoneTitle">Choose a media file</span>
+          <small>or drop it here · converted on this device</small>
+        </label>
+
+        <div class="convert-grid">
+          <label class="field">
+            <span>Target format</span>
+            <select id="convertFormat">
+              <option value="mp3">MP3</option>
+              <option value="m4a">M4A</option>
+              <option value="opus">Opus</option>
+              <option value="wav">WAV</option>
+              <option value="flac">FLAC</option>
+              <option value="mp4">MP4</option>
+              <option value="webm">WebM</option>
+              <option value="gif">GIF</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Audio bitrate</span>
+            <select id="convertBitrate">
+              <option value="128k">128 kbps</option>
+              <option value="192k" selected>192 kbps</option>
+              <option value="256k">256 kbps</option>
+              <option value="320k">320 kbps</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Trim start (s)</span>
+            <input id="trimStart" type="number" min="0" step="0.1" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>Trim end (s)</span>
+            <input id="trimEnd" type="number" min="0" step="0.1" placeholder="—" />
+          </label>
+        </div>
+
+        <button class="btn primary block" id="convertBtn" type="button" disabled>Convert</button>
+      </div>
+
+      <section class="card progress" id="convertProgress" hidden>
+        <div class="progress-head">
+          <strong id="convertProgressTitle">Converting…</strong>
+          <span class="progress-percent" id="convertProgressPercent">0%</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="convertProgressFill"></div></div>
+        <div class="progress-meta" id="convertProgressMeta"></div>
+        <div class="progress-actions" id="convertProgressActions" hidden>
+          <a class="btn primary" id="convertSaveLink" download>Save file</a>
+          <button class="btn ghost" id="convertProgressClose" type="button">Close</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    <span>Open source · AGPL v3 ·</span>
+    <a href="https://github.com/M5Devs/ProDL" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <span id="apiLabel">API: same origin</span>
+  </footer>
+
+  <!-- ── Settings ───────────────────────────────────────────────────────── -->
+  <dialog id="settingsDialog" class="dialog">
+    <form method="dialog" class="dialog-inner">
+      <header class="dialog-head">
+        <h2>Settings</h2>
+        <button class="icon-btn" value="close" aria-label="Close">✕</button>
+      </header>
+
+      <section class="dialog-section">
+        <p class="section-label">Backend connection</p>
+        <label class="field">
+          <span>API base URL</span>
+          <input id="apiBaseInput" type="url" placeholder="http://127.0.0.1:8000" spellcheck="false" />
+        </label>
+        <p class="hint">Leave empty to use the same origin. Also settable with <code>?api=…</code>.</p>
+        <div class="row">
+          <button class="btn primary" id="saveApiBtn" type="button">Save</button>
+          <button class="btn ghost" id="resetApiBtn" type="button">Reset</button>
+        </div>
+      </section>
+
+      <section class="dialog-section">
+        <p class="section-label">Server status</p>
+        <pre class="health-json" id="healthJson">—</pre>
+        <div class="row"><button class="btn ghost" id="refreshHealthBtn" type="button">Refresh</button></div>
+      </section>
+
+      <section class="dialog-section">
+        <p class="section-label">Cookies (Netscape format)</p>
+        <p class="hint">
+          Stored only on this device with owner-only permissions. Used for age-restricted
+          videos and your own private playlists. Never sent anywhere else.
+        </p>
+        <textarea id="cookiesInput" rows="6" spellcheck="false" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	0	SID	…"></textarea>
+        <div class="row">
+          <button class="btn primary" id="saveCookiesBtn" type="button">Save cookies</button>
+          <button class="btn ghost" id="clearCookiesBtn" type="button">Delete</button>
+          <span class="hint" id="cookiesStatus">—</span>
+        </div>
+      </section>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
