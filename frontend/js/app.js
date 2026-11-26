@@ -406,9 +406,10 @@
       var info = state.info || {};
       var segments = info.sponsorblock && info.sponsorblock.segments ? info.sponsorblock.segments : [];
       var audioOnly = /\.(mp3|m4a|opus|oga|flac|wav)$/i.test(filename);
+      // The filename always matches the finished task; info may be stale (convert tab).
       native.playMedia(
         config.absolute(event.file.download_url || ''),
-        info.title || filename || 'ProDL',
+        filename || info.title || 'ProDL',
         info.thumbnail || null,
         audioOnly,
         segments.length ? JSON.stringify(segments) : null

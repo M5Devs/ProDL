@@ -127,7 +127,8 @@ ProDL is AGPLv3. The Android shell adds:
 | kotlinx-serialization / coroutines | Apache-2.0 | |
 
 No `com.google.android.gms`, no Firebase, no crash/ad SDKs: `./gradlew :app:dependencies`
-shows only AndroidX, Media3, Ktor, Kotlin and the yt-dlp wrapper.
+shows only AndroidX, Media3, Ktor, Kotlin and the yt-dlp wrapper. Full
+attribution for the bundled binaries lives in [NOTICE.md](NOTICE.md).
 
 ## Known limits
 
